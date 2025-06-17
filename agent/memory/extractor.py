@@ -24,25 +24,56 @@ def extract_memory_kv_chain(model: BaseChatModel):
     >>> print(result)   # {"name": "小明", "location": "台北", "favorite_music": "爵士樂"}
     """
 
+    # prompt = ChatPromptTemplate.from_messages(
+    #     [
+    #         (
+    #             "system",
+    #             "You are an information extractor. Your task is to identify any ‘attribute: value’ information in the user’s sentence.\n"
+    #             "Return only a single-line, valid JSON object; keys must be in English, and values should retain their original meaning."
+    #             "If no key-value pairs can be extracted, return an empty JSON object {{}}.",
+    #             # "你是一個資訊抽取器，工作是把使用者句子裡的『屬性: 值』資訊找出來。\n"
+    #             # "請只回傳 **單行**、有效的 JSON 物件，鍵用英文字，值保留原語意；"
+    #         # "若沒有可抽取的鍵值，請回傳空的 JSON 物件 {{}}。",
+    #         ),
+    #         ("human", "{content}"),
+    #     ]
+    # )
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                "你是一個資訊抽取器，工作是把使用者句子裡的『屬性: 值』資訊找出來。\n"
-                "請只回傳 **單行**、有效的 JSON 物件，鍵用英文字，值保留原語意；"
-                "若沒有可抽取的鍵值，請回傳空的 JSON 物件 {{}}。",
+                "You are an information extractor. Your task is to find any user-profile facts in the input "
+                "and return **one-line valid JSON**. "
+                "Use the following English keys when possible: "
+                "name, age, location, favorite_music, favorite_food, profession, hobby. "
+                "If nothing can be extracted, return an empty JSON object {{}}."
+                "MUST NOT output ANY emoji, emoticon, romaji, pinyin, furigana, or other romanization/phonetic transcription.",
+            ),
+            (
+                "human",
+                "我叫小明，住台北，最愛聽爵士樂, 30 years,性別男,電話0988",
+            ),
+            (
+                "ai",
+                '{{"name":"小明","location":"台北","favorite_music":"爵士樂","age":"30 years","sex":"Male","phone":"0988"}}',
+            ),
+            (
+                "human",
+                "Hi, I'm Akira from Osaka, 34 years old. Love listening to rock.",
+            ),
+            (
+                "ai",
+                '{{"name":"Akira","location":"Osaka","age":"34 years old","favorite_music":"rock"}}',
             ),
             ("human", "{content}"),
         ]
     )
 
     async def _extract(inputs: Dict[str, Any]) -> Dict[str, Any]:
-        user_text = inputs.get("content", "")
+        user_text = inputs.get("content") or inputs.get("text") or ""
         messages = prompt.format_messages(content=user_text)
         response = await model.ainvoke(messages)
-
         raw_content = (response.content if hasattr(response, "content") else str(response)).strip()
-
         for parse in (_safe_json_loads, _safe_ast_literal):
             parsed = parse(raw_content)
             if isinstance(parsed, dict):
