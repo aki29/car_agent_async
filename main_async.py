@@ -15,6 +15,14 @@ load_dotenv(find_dotenv())
 
 timezone = pytz.timezone("Asia/Taipei")
 
+import re
+
+PINYIN_RE = re.compile(r'\(([A-Za-zāáǎàēéěèīíǐìōóǒòūúǔùüǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙÜǕǗǙǛ\s,]+)\)')
+
+
+def strip_romanization(text: str) -> str:
+    return PINYIN_RE.sub("", text)
+
 
 def signal_handler(sig, frame):
     print("\nInterrupted!")
