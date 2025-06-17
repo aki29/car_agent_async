@@ -62,9 +62,7 @@ def get_chat_chain(user_id: str, model):
         return d.get("command") == "exit"
 
     memory_node = RunnableLambda(lambda d: f"[Memory] {d['mem'] or 'No Data.'}")
-    clear_node = RunnableLambda(
-        lambda d: asyncio.create_task(clear_memory(user_id)) or "user memory has been cleared."
-    )
+    clear_node = RunnableLambda(lambda d: d["__payload"])
     exit_node = RunnableLambda(lambda d: "")
 
     async def store_and_extract(input_dict):
@@ -75,7 +73,7 @@ def get_chat_chain(user_id: str, model):
             return {"command": "memory", "mem": mem}
         if user_input == "/clear":
             await clear_memory(user_id)
-            return {"command": "clear"}
+            return {"command": "clear", "__payload": "[Memory] user memory has been cleared."}
         if user_input == "/exit":
             return {"command": "exit"}
 
