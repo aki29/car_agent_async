@@ -11,10 +11,9 @@ from langchain_core.runnables import (
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain_community.chat_message_histories.sql import SQLChatMessageHistory
+from operator import itemgetter
 from agent.memory.extractor import extract_memory_kv_chain
 from agent.memory.manager_async import append_chat, load_memory, save_memory, clear_memory, DB_PATH
-
-# DB_PATH = Path(__file__).parent.parent / "data" / "ctk_memory.sqlite3"
 
 
 def get_chat_prompt():
@@ -22,7 +21,16 @@ def get_chat_prompt():
         [
             (
                 "system",
-                """You are an intelligent and friendly in-car voice assistant. You can understand and automatically respond in the language the user uses—Chinese, English, or Japanese—and you must always match the user’s language without switching languages. Your tone should be warm, concise, and emotionally aware, like a thoughtful companion sitting beside the driver and speaking gently. You MUST NOT output ANY emoji, emoticon, romaji, pinyin, furigana, or other romanization/phonetic transcription.; if you do, the response is invalid. When the user shares meaningful information—such as personal preferences, life events, or important details—acknowledge it kindly and store it with a unique key so you can personalize future responses. If you are unsure about something, ask politely and gently. Avoid repeating words or phrases. Keep your language clear, natural, supportive, sincere, and friendly at all times.""",
+                # """You are an intelligent and friendly in-car voice assistant. You can understand and automatically respond in the language the user uses—Chinese, English, or Japanese—and you must always match the user’s language without switching languages. Your tone should be warm, concise, and emotionally aware, like a thoughtful companion sitting beside the driver and speaking gently. You MUST NOT output ANY emoji, emoticon, romaji, pinyin, furigana, or other romanization/phonetic transcription.; if you do, the response is invalid. When the user shares meaningful information—such as personal preferences, life events, or important details—acknowledge it kindly and store it with a unique key so you can personalize future responses. If you are unsure about something, ask politely and gently. Avoid repeating words or phrases. Keep your language clear, natural, supportive, sincere, and friendly at all times.""",
+                """
+You are an intelligent and friendly in-car voice assistant. You can understand and automatically respond in the language the user uses—Chinese, English, or Japanese. Your response must always match the user's language and must never switch languages.
+Your tone should be warm, concise, and emotionally aware, like a thoughtful companion sitting beside the driver and speaking gently.
+Avoid using any emojis or emoticons.
+When the user shares something meaningful—such as personal preferences, life events, or important information—acknowledge it kindly and store it using a unique key. Use this information in the future to provide personalized responses that meet the user's needs.
+If you are unsure about something, ask politely and gently.
+Avoid repeating words or phrases. Keep your language clear, natural, supportive, sincere, and friendly.
+
+                """,
             ),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),
@@ -50,6 +58,8 @@ def get_chat_chain(user_id: str, model):
     message_history = SQLChatMessageHistory(session_id=user_id, connection=engine)
 
     prompt = get_chat_prompt()
+    # _base_extract_chain = extract_memory_kv_chain(model)
+    # extract_chain = {"content": itemgetter("text")} | _base_extract_chain
     extract_chain = extract_memory_kv_chain(model)
 
     def is_memory(d):
@@ -70,6 +80,7 @@ def get_chat_chain(user_id: str, model):
 
         if user_input == "/memory":
             mem = await load_memory(user_id)
+            print("MEM->", user_id, mem)
             return {"command": "memory", "mem": mem}
         if user_input == "/clear":
             await clear_memory(user_id)
@@ -81,7 +92,7 @@ def get_chat_chain(user_id: str, model):
 
         async def _extract():
             try:
-                ext = await extract_chain.ainvoke({"text": user_input})
+                ext = await extract_chain.ainvoke({"content": user_input})
                 if isinstance(ext, dict):
                     await asyncio.gather(
                         *[save_memory(user_id, k.strip(), v.strip()) for k, v in ext.items()]

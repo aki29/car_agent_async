@@ -67,7 +67,7 @@ async def main():
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
     chat = get_chat_chain(user_id, model)
 
-    print("\n[In-Car Assistant STREAMING mode.  Type /exit to end.]")
+    print("\n[In-Car Assistant STREAMING mode. Type /exit to end.]")
     while True:
         query = (await ainput("\nQuery: ")).strip()
         if not query:
