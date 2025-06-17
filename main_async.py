@@ -6,6 +6,10 @@ from langchain_ollama import ChatOllama, OllamaEmbeddings
 
 from agent.chains.chat_chain_async import get_chat_chain
 from agent.memory.manager_async import init_db
+from langchain.globals import set_debug, set_verbose
+
+# set_debug(True)
+# set_verbose(True)
 
 load_dotenv(find_dotenv())
 
@@ -34,20 +38,18 @@ def init_models():
     return llm, embed
 
 
-from langchain.callbacks.base import AsyncCallbackHandler
+# from langchain.callbacks.base import AsyncCallbackHandler
+# class PrintCallback(AsyncCallbackHandler):
+#     async def on_chain_start(self, serialized, *args, **kwargs):
+#         if serialized:
+#             print(f"Start {serialized}")
 
+#     async def on_chain_end(self, outputs, **_):
+#         if outputs:
+#             print(f"End → {outputs}")
 
-class PrintCallback(AsyncCallbackHandler):
-    async def on_chain_start(self, serialized, *args, **kwargs):
-        if serialized:
-            print(f"Start {serialized}")
-
-    async def on_chain_end(self, outputs, **_):
-        if outputs:
-            print(f"End → {outputs}")
-
-    async def on_llm_new_token(self, token, **_):
-        print(token, end="", flush=True)
+#     async def on_llm_new_token(self, token, **_):
+#         print(token, end="", flush=True)
 
 
 async def main():
