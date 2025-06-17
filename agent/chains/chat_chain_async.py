@@ -2,15 +2,19 @@ import asyncio
 from pathlib import Path
 from sqlalchemy.ext.asyncio import create_async_engine
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.runnables import RunnableLambda, RunnableWithMessageHistory
+from langchain_core.runnables import (
+    RunnableBranch,
+    RunnableLambda,
+    RunnablePassthrough,
+    RunnableWithMessageHistory,
+)
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain_community.chat_message_histories.sql import SQLChatMessageHistory
-
-from agent.memory.manager_async import append_chat, load_memory, save_memory, clear_memory
 from agent.memory.extractor import extract_memory_kv_chain
+from agent.memory.manager_async import append_chat, load_memory, save_memory, clear_memory, DB_PATH
 
-DB_PATH = Path(__file__).parent.parent / "data" / "ctk_memory.sqlite3"
+# DB_PATH = Path(__file__).parent.parent / "data" / "ctk_memory.sqlite3"
 
 
 def get_chat_prompt():
@@ -48,18 +52,32 @@ def get_chat_chain(user_id: str, model):
     prompt = get_chat_prompt()
     extract_chain = extract_memory_kv_chain(model)
 
-    async def store_and_extract(input_dict):
-        user_input = input_dict["question"]
+    def is_memory(d):
+        return d.get("command") == "memory"
 
-        cmd = user_input.strip()
-        if cmd == "/memory":
+    def is_clear(d):
+        return d.get("command") == "clear"
+
+    def is_exit(d):
+        return d.get("command") == "exit"
+
+    memory_node = RunnableLambda(lambda d: f"[Memory] {d['mem'] or 'No Data.'}")
+    clear_node = RunnableLambda(
+        lambda d: asyncio.create_task(clear_memory(user_id)) or "user memory has been cleared."
+    )
+    exit_node = RunnableLambda(lambda d: "")
+
+    async def store_and_extract(input_dict):
+        user_input = input_dict["question"].strip()
+
+        if user_input == "/memory":
             mem = await load_memory(user_id)
-            return {"question": f"目前記憶: {mem or '尚無資料'}", "chat_history": []}
-        if cmd == "/clear":
+            return {"command": "memory", "mem": mem}
+        if user_input == "/clear":
             await clear_memory(user_id)
-            return {"question": "已清除使用者記憶", "chat_history": []}
-        if cmd == "/exit":
-            return {"question": "[exit]", "chat_history": []}
+            return {"command": "clear"}
+        if user_input == "/exit":
+            return {"command": "exit"}
 
         await append_chat(user_id, "user", user_input)
 
@@ -67,17 +85,26 @@ def get_chat_chain(user_id: str, model):
             try:
                 ext = await extract_chain.ainvoke({"text": user_input})
                 if isinstance(ext, dict):
-                    tasks = [save_memory(user_id, k.strip(), v.strip()) for k, v in ext.items()]
-                    await asyncio.gather(*tasks)
+                    await asyncio.gather(
+                        *[save_memory(user_id, k.strip(), v.strip()) for k, v in ext.items()]
+                    )
             except Exception as e:
-                print(f"[!] Memory extraction failed: {e}")
+                print("[!] memory extract err:", e)
 
         asyncio.create_task(_extract())
 
-        history_msgs = await message_history.aget_messages()
-        return {"question": user_input, "chat_history": history_msgs}
+        history = await message_history.aget_messages()
+        return {"command": "normal", "question": user_input, "chat_history": history}
 
-    chain = RunnableLambda(store_and_extract) | prompt | model
+    llm_part = prompt | model
+    router = RunnableBranch(
+        (is_memory, memory_node),
+        (is_clear, clear_node),
+        (is_exit, exit_node),
+        RunnablePassthrough() | llm_part,
+    )
+
+    chain = RunnableLambda(store_and_extract) | router
     # chain = chain.with_config(
     #     {
     #         "run_name": "chat_pipeline",

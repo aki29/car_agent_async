@@ -81,7 +81,7 @@ async def main():
                 response_text += chunk
             print()  # newline after streaming
 
-            if response_text.strip() == "[exit]":
+            if response_text.strip() == "":
                 print("bye！")
                 break
 
