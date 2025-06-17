@@ -1,63 +1,68 @@
 import asyncio, os, time, uuid, signal, pytz
 from termcolor import colored
-from dotenv import load_dotenv
+from dotenv import load_dotenv, find_dotenv
 from aioconsole import ainput
+from langchain_ollama import ChatOllama, OllamaEmbeddings
 
 from agent.chains.chat_chain_async import get_chat_chain
 from agent.memory.manager_async import init_db
-from agent.rag.retriever import build_retriever_async
 
-# Load .env if present
-load_dotenv()
+load_dotenv(find_dotenv())
 
 timezone = pytz.timezone("Asia/Taipei")
 
 def signal_handler(sig, frame):
-    print("\nInterrupted!!")
+    print("\nInterrupted!")
     raise SystemExit
 
 signal.signal(signal.SIGINT, signal_handler)
 
-# Dynamically import models from LangChain
-from langchain_ollama import ChatOllama, OllamaEmbeddings
-
-def init_model():
-    return (
-        ChatOllama(
-            model=os.getenv("LLM_MODEL_NAME", "gemma3:1b"),
-            base_url="http://localhost:11434",
-            temperature=0.7,
-        ),
-        OllamaEmbeddings(
-            model=os.getenv("EMBEDDINGS_MODEL_NAME", "nomic-embed-text:latest"),
-            base_url="http://localhost:11434",
-        ),
+def init_models():
+    llm = ChatOllama(
+        model=os.getenv("LLM_MODEL_NAME", "gemma3:1b"),
+        base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
+        temperature=0.7,
+        streaming=True,   # ★ Enable streaming
     )
+    embed = OllamaEmbeddings(
+        base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
+        model=os.getenv("EMBEDDINGS_MODEL_NAME", "nomic-embed-text:latest")
+    )
+    return llm, embed
 
 async def main():
-    model, embed = init_model()
-
-    # Initialize database and vector retriever concurrently
+    model, embed = init_models()
     await init_db()
-    retriever = await build_retriever_async(embed)
 
-    user_id = (await ainput("User ID: ")).strip() or str(uuid.uuid4())
-    chat = get_chat_chain(user_id, model, retriever)
+    user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
+    chat = get_chat_chain(user_id, model)
 
-    print("\n[In-Car Assistant async demo. /exit to quit]")
+    print("\n[In-Car Assistant STREAMING mode.  Type /exit to end.]")
     while True:
-        query = (await ainput("\nYou> ")).strip()
+        query = (await ainput("\nQuery: ")).strip()
         if not query:
             continue
+
         start = time.perf_counter()
-        result = await chat.ainvoke(
-            {"question": query},
-            config={"configurable": {"session_id": user_id}},
-        )
-        if result == "[exit]":
-            break
-        print(colored(f"Assistant> {result}", "green"))
-        print(colored(f"({time.perf_counter()-start:.2f}s)", "blue"))
+        response_text = ""
+        try:
+            async for chunk in chat.astream(
+                {"question": query},
+                config={"configurable": {"session_id": user_id}}
+            ):
+                print(colored(chunk, "green"), end="", flush=True)
+                response_text += chunk
+            print()  # newline after streaming
+
+            if response_text.strip() == "[exit]":
+                print("bye！")
+                break
+
+        except Exception as e:
+            print(colored(f"[error] {e}", "red"))
+        finally:
+            elapsed = time.perf_counter() - start
+            print(colored(f"({elapsed:.2f}s)", "blue"))
 
 if __name__ == "__main__":
     asyncio.run(main())
