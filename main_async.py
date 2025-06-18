@@ -15,13 +15,10 @@ load_dotenv(find_dotenv())
 
 timezone = pytz.timezone("Asia/Taipei")
 
-import re
-
-PINYIN_RE = re.compile(r'\(([A-Za-zāáǎàēéěèīíǐìōóǒòūúǔùüǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙÜǕǗǙǛ\s,]+)\)')
-
-
-def strip_romanization(text: str) -> str:
-    return PINYIN_RE.sub("", text)
+# import re
+# PINYIN_RE = re.compile(r'\(([A-Za-zāáǎàēéěèīíǐìōóǒòūúǔùüǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙÜǕǗǙǛ\s,]+)\)')
+# def strip_romanization(text: str) -> str:
+#     return PINYIN_RE.sub("", text)
 
 
 def signal_handler(sig, frame):
@@ -33,15 +30,37 @@ signal.signal(signal.SIGINT, signal_handler)
 
 
 def init_models():
-    llm = ChatOllama(
+    critical_cfg = dict(
         model=os.getenv("LLM_MODEL_NAME", "gemma3:1b"),
         base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
-        temperature=0.7,
-        streaming=True,  # ★ Enable streaming
+        keep_alive=-1,
+        num_ctx=768,
+        num_predict=48,
+        num_thread=2,
+        temperature=0.3,
+        top_k=15,
+        top_p=0.8,
+        stop=["\n\n", "<END>"],
     )
+    causal_cfg = dict(
+        model=os.getenv("LLM_MODEL_NAME", "gemma3:1b"),
+        base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
+        keep_alive=-1,
+        num_ctx=1024,
+        num_predict=96,
+        num_thread=2,
+        temperature=0.7,
+        top_k=40,
+        top_p=0.9,
+        stop=["\n\n", "<END>"],
+    )
+    llm = ChatOllama(**causal_cfg)
     embed = OllamaEmbeddings(
         base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         model=os.getenv("EMBEDDINGS_MODEL_NAME", "nomic-embed-text:latest"),
+        keep_alive=-1,
+        num_thread=4,
+        # num_ctx=512,
     )
     return llm, embed
 
