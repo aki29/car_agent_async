@@ -6,10 +6,13 @@ from langchain_ollama import ChatOllama, OllamaEmbeddings
 
 from agent.chains.chat_chain_async import get_chat_chain
 from agent.memory.manager_async import init_db
-from langchain.globals import set_debug, set_verbose
+from langchain.globals import set_debug, set_verbose, set_llm_cache
+from langchain_core.caches import InMemoryCache
 
 # set_debug(True)
 # set_verbose(True)
+# set_llm_cache(None)           # stop cache
+set_llm_cache(InMemoryCache())  # new cache everytime
 
 load_dotenv(find_dotenv())
 
@@ -54,7 +57,7 @@ def init_models():
         top_p=0.9,
         stop=["\n\n", "<END>"],
     )
-    llm = ChatOllama(**causal_cfg)
+    llm = ChatOllama(**causal_cfg, cache=True)
     embed = OllamaEmbeddings(
         base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         model=os.getenv("EMBEDDINGS_MODEL_NAME", "nomic-embed-text:latest"),
@@ -62,25 +65,24 @@ def init_models():
         num_thread=4,
         # num_ctx=512,
     )
-    return llm, embed
-
-
-# from langchain.callbacks.base import AsyncCallbackHandler
-# class PrintCallback(AsyncCallbackHandler):
-#     async def on_chain_start(self, serialized, *args, **kwargs):
-#         if serialized:
-#             print(f"Start {serialized}")
-
-#     async def on_chain_end(self, outputs, **_):
-#         if outputs:
-#             print(f"End → {outputs}")
-
-#     async def on_llm_new_token(self, token, **_):
-#         print(token, end="", flush=True)
+    mem_cfg = dict(
+        model=os.getenv("MEM_MODEL_NAME", "gemma3:1b"),
+        base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
+        keep_alive=-1,
+        # num_ctx=768,
+        # num_predict=48,
+        num_thread=2,
+        temperature=0,
+        # top_k=15,
+        # top_p=0.8,
+        stop=["\n\n", "<END>"],
+    )
+    mem = ChatOllama(**mem_cfg, cache=True)
+    return llm, embed, mem
 
 
 async def main():
-    model, embed = init_models()
+    model, embed, _ = init_models()
     await init_db()
 
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())

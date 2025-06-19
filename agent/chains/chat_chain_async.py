@@ -6,11 +6,12 @@ from langchain_core.runnables import (
     RunnableBranch,
     RunnableLambda,
     RunnablePassthrough,
-    RunnableWithMessageHistory,
 )
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
 from langchain_community.chat_message_histories.sql import SQLChatMessageHistory
+from agent.memory.rolling_history import RollingSQLHistory
+from agent.memory.engine import async_session, async_engine, sync_engine
 from operator import itemgetter
 from agent.memory.extractor import extract_memory_kv_chain
 from agent.memory.manager_async import append_chat, load_memory, save_memory, clear_memory, DB_PATH
@@ -22,12 +23,21 @@ def get_chat_prompt():
             (
                 "system",
                 """
-                You are an intelligent and friendly in-car voice assistant. You can understand and automatically respond in the language the user uses—Chinese, English, or Japanese. Your response must always match the user's language and must never switch languages.
-                Your tone should be warm, concise, and emotionally aware, like a thoughtful companion sitting beside the driver and speaking gently.
-                Avoid using any emojis or emoticons.
-                When the user shares something meaningful—such as personal preferences, life events, or important information—acknowledge it kindly and store it using a unique key. Use this information in the future to provide personalized responses that meet the user's needs.
-                If you are unsure about something, ask politely and gently.
-                Avoid repeating words or phrases. Keep your language clear, natural, supportive, sincere, and friendly.""",
+                【語言】偵測並使用用戶語言（繁中／英／日），依使用者輸入語言回應不得切換。
+                【語氣】溫暖、精簡、體貼，如同坐在駕駛旁的夥伴。
+                【標點】禁止 emoji、顏文字、裝飾符號、標點符號。
+                【思考】隱藏推理，只輸出最終答案。
+                【輸出限制】全文 ≤50 字；若需步驟，列 ≤3 步，每步 ≤15 字。
+                【記憶】用戶透露偏好或重要資訊時，親切回應並以唯一key存檔，後續直接個性化運用。
+                【釐清】有疑慮時，可禮貌提問確認。
+                """,
+                # """
+                # You are an intelligent and friendly in-car voice assistant. You can understand and automatically respond in the language the user uses—Chinese, English, or Japanese. Your response must always match the user's language and must never switch languages.
+                # Your tone should be warm, concise, and emotionally aware, like a thoughtful companion sitting beside the driver and speaking gently.
+                # Avoid using any emojis or emoticons.
+                # When the user shares something meaningful—such as personal preferences, life events, or important information—acknowledge it kindly and store it using a unique key. Use this information in the future to provide personalized responses that meet the user's needs.
+                # If you are unsure about something, ask politely and gently.
+                # Avoid repeating words or phrases. Keep your language clear, natural, supportive, sincere, and friendly.""",
             ),
             MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),
@@ -35,28 +45,15 @@ def get_chat_prompt():
     )
 
 
-# from langchain.callbacks.base import AsyncCallbackHandler
-# class PrintCallback(AsyncCallbackHandler):
-#     async def on_chain_start(self, serialized, *args, **kwargs):
-#         if serialized:
-#             print(f"Start {serialized}")
-
-#     async def on_chain_end(self, outputs, **_):
-#         if outputs:
-#             print(f"End → {outputs}")
-
-#     async def on_llm_new_token(self, token, **_):
-#         print(token, end="", flush=True)
-
-
 def get_chat_chain(user_id: str, model):
-    # use async engine
-    engine = create_async_engine(f"sqlite+aiosqlite:///{DB_PATH}")
-    message_history = SQLChatMessageHistory(session_id=user_id, connection=engine)
+
+    message_history = RollingSQLHistory(
+        session_id=user_id,
+        connection=sync_engine,
+        window_size=4,
+    )
 
     prompt = get_chat_prompt()
-    # _base_extract_chain = extract_memory_kv_chain(model)
-    # extract_chain = {"content": itemgetter("text")} | _base_extract_chain
     extract_chain = extract_memory_kv_chain(model)
 
     def is_memory(d):
@@ -77,12 +74,17 @@ def get_chat_chain(user_id: str, model):
 
         if user_input == "/memory":
             mem = await load_memory(user_id)
-            return {"command": "memory", "mem": mem}
+            if mem:
+                lines = [f"{k}: {v}" for k, v in mem.items()]
+                return "[Memory]\n" + "\n".join(lines)
+            return "[Memory] No data."
+
         if user_input == "/clear":
             await clear_memory(user_id)
-            return {"command": "clear", "__payload": "[Memory] user memory has been cleared."}
+            return "[Memory] Cleared."
+
         if user_input == "/exit":
-            return {"command": "exit"}
+            return ""
 
         await append_chat(user_id, "user", user_input)
 
@@ -99,7 +101,12 @@ def get_chat_chain(user_id: str, model):
         asyncio.create_task(_extract())
 
         history = await message_history.aget_messages()
-        return {"command": "normal", "question": user_input, "chat_history": history}
+
+        reply = await router.ainvoke({"question": user_input, "chat_history": history})
+
+        message_history.add_user_message(user_input)
+        message_history.add_ai_message(reply)
+        return reply
 
     llm_part = prompt | model
     router = RunnableBranch(
@@ -109,28 +116,5 @@ def get_chat_chain(user_id: str, model):
         RunnablePassthrough() | llm_part,
     )
 
-    chain = RunnableLambda(store_and_extract) | router
-    # chain = chain.with_config(
-    #     {
-    #         "run_name": "chat_pipeline",
-    #         "debug": True,
-    #         # "callbacks": [StreamingStdOutCallbackHandler()],
-    #         "callbacks": [PrintCallback()],
-    #         "tags": ["debug"],
-    #     }
-    # )
-
-    return (
-        RunnableWithMessageHistory(
-            chain,
-            lambda _: message_history,
-            input_messages_key="question",
-            history_messages_key="chat_history",
-        )
-        | StrOutputParser()
-    )
-
-    # .with_config(
-    #     {"run_name": "chat_pipeline", "verbose": True}  # 只顯示「重要事件」
-    #     # 如果想看所有子步驟，把 "verbose": True 改成 "debug": True
-    # )
+    chain = RunnableLambda(store_and_extract)
+    return chain | StrOutputParser()

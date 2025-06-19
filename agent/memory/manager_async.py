@@ -1,34 +1,10 @@
-# import aiosqlite
-# from datetime import datetime
-# from pathlib import Path
-
-# DB_PATH = Path(__file__).parent.parent / "data" / "ctk_memory.sqlite3"
-# DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-
-# CREATE_SQL = """
-# CREATE TABLE IF NOT EXISTS chat_history (
-#     id INTEGER PRIMARY KEY AUTOINCREMENT,
-#     user_id TEXT, role TEXT, content TEXT, timestamp TEXT
-# );
-# CREATE TABLE IF NOT EXISTS user_memory (
-#     id INTEGER PRIMARY KEY AUTOINCREMENT,
-#     user_id TEXT, memory_key TEXT, memory_value TEXT,
-#     updated_at TEXT, UNIQUE(user_id, memory_key)
-# );"""
-
-# async def init_db() -> None:
-#     async with aiosqlite.connect(DB_PATH) as db:
-#         await db.executescript(CREATE_SQL)
-#         await db.commit()
-
-
 import os
 import aiosqlite
 from datetime import datetime
 from pathlib import Path
 
-_DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "ctk_memory.sqlite3"
-DB_PATH = Path(os.environ.get("CTK_DB_PATH", _DEFAULT_PATH))
+_DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "ctk_user.sqlite3"
+DB_PATH = Path(os.environ.get("CTK_USER_DB_PATH", _DEFAULT_PATH))
 
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 if not DB_PATH.exists():
@@ -70,6 +46,7 @@ async def append_chat(user_id: str, role: str, content: str) -> None:
 
 
 async def load_chat_history(user_id: str, limit: int = 20):
+    print("AKI->load_chat_history")
     async with aiosqlite.connect(DB_PATH) as db:
         rows = await db.execute_fetchall(
             "SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT ?",
