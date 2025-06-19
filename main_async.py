@@ -8,6 +8,7 @@ from agent.chains.chat_chain_async import get_chat_chain
 from agent.memory.manager_async import init_db
 from langchain.globals import set_debug, set_verbose, set_llm_cache
 from langchain_core.caches import InMemoryCache
+from agent.memory.engine import checkpoint_db
 
 # set_debug(True)
 # set_verbose(True)
@@ -18,18 +19,20 @@ load_dotenv(find_dotenv())
 
 timezone = pytz.timezone("Asia/Taipei")
 
-# import re
-# PINYIN_RE = re.compile(r'\(([A-Za-zāáǎàēéěèīíǐìōóǒòūúǔùüǖǘǚǜĀÁǍÀĒÉĚÈĪÍǏÌŌÓǑÒŪÚǓÙÜǕǗǙǛ\s,]+)\)')
-# def strip_romanization(text: str) -> str:
-#     return PINYIN_RE.sub("", text)
-
 
 def signal_handler(sig, frame):
-    print("\nInterrupted!")
+    print("\nInterrupted!!")
+    checkpoint_db()
     raise SystemExit
 
 
 signal.signal(signal.SIGINT, signal_handler)
+
+
+async def periodic_checkpoint(interval_sec=600):
+    while True:
+        await asyncio.sleep(interval_sec)
+        checkpoint_db()
 
 
 def init_models():
@@ -87,38 +90,43 @@ async def main():
 
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
     chat = get_chat_chain(user_id, model)
-
+    asyncio.create_task(periodic_checkpoint())
     print("\n[In-Car Assistant STREAMING mode. Type /exit to end.]")
-    while True:
-        query = (await ainput("\nQuery: ")).strip()
-        if not query:
-            continue
+    try:
+        while True:
+            query = (await ainput("\nQuery: ")).strip()
+            if not query:
+                continue
 
-        start = time.perf_counter()
-        response_text = ""
-        try:
-            async for chunk in chat.astream(
-                # {"question": query}, config={"configurable": {"session_id": user_id}}
-                {"question": query},
-                config={
-                    "configurable": {"session_id": user_id},
-                    # "callbacks": [PrintCallback()],
-                    # "tags": ["debug"],
-                },
-            ):
-                print(colored(chunk, "green"), end="", flush=True)
-                response_text += chunk
-            print()  # newline after streaming
+            start = time.perf_counter()
+            response_text = ""
+            try:
+                async for chunk in chat.astream(
+                    # {"question": query}, config={"configurable": {"session_id": user_id}}
+                    {"question": query},
+                    config={
+                        "configurable": {"session_id": user_id},
+                        # "callbacks": [PrintCallback()],
+                        # "tags": ["debug"],
+                    },
+                ):
+                    print(colored(chunk, "green"), end="", flush=True)
+                    response_text += chunk
+                print()  # newline after streaming
 
-            if response_text.strip() == "":
-                print("bye！")
-                break
+                if response_text.strip() == "":
+                    print("bye！")
+                    break
 
-        except Exception as e:
-            print(colored(f"[error] {e}", "red"))
-        finally:
-            elapsed = time.perf_counter() - start
-            print(colored(f"({elapsed:.2f}s)", "blue"))
+            except Exception as e:
+                print(colored(f"[error] {e}", "red"))
+            finally:
+                elapsed = time.perf_counter() - start
+                print(colored(f"({elapsed:.2f}s)", "blue"))
+    except Exception as e:
+        print(colored(f"[system error] {e}", "red"))
+    finally:
+        checkpoint_db()
 
 
 if __name__ == "__main__":

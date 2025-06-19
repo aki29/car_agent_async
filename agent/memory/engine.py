@@ -14,6 +14,15 @@ DB_PATH = Path(os.environ.get("CTK_MEM_DB_PATH", _DEFAULT_PATH))
 # if not DB_PATH.exists():
 #     DB_PATH.touch()
 
+import sqlite3
+
+
+def checkpoint_db(path=DB_PATH):
+    conn = sqlite3.connect(path)
+    conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+    conn.close()
+
+
 ASYNC_DSN = f"sqlite+aiosqlite:///{DB_PATH}"
 SYNC_DSN = f"sqlite:///{DB_PATH}"
 

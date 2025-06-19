@@ -15,6 +15,7 @@ from agent.memory.engine import async_session, async_engine, sync_engine
 from operator import itemgetter
 from agent.memory.extractor import extract_memory_kv_chain
 from agent.memory.manager_async import append_chat, load_memory, save_memory, clear_memory, DB_PATH
+from agent.memory.engine import checkpoint_db
 
 
 def get_chat_prompt():
@@ -50,7 +51,7 @@ def get_chat_chain(user_id: str, model):
     message_history = RollingSQLHistory(
         session_id=user_id,
         connection=sync_engine,
-        window_size=4,
+        window_size=40,
     )
 
     prompt = get_chat_prompt()
@@ -82,6 +83,10 @@ def get_chat_chain(user_id: str, model):
         if user_input == "/clear":
             await clear_memory(user_id)
             return "[Memory] Cleared."
+
+        if user_input == "/checkpoint":
+            checkpoint_db()
+            return "[Memory] WAL has been synced to the main database file."
 
         if user_input == "/exit":
             return ""
