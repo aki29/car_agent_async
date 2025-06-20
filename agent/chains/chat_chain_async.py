@@ -1,18 +1,18 @@
 import asyncio
 from pathlib import Path
-from sqlalchemy.ext.asyncio import create_async_engine
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import (
     RunnableBranch,
     RunnableLambda,
     RunnablePassthrough,
 )
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.callbacks.streaming_stdout import StreamingStdOutCallbackHandler
-from langchain_community.chat_message_histories.sql import SQLChatMessageHistory
-from agent.memory.rolling_history import RollingSQLHistory
-from agent.memory.engine import async_session, async_engine, sync_engine
-from operator import itemgetter
+
+from agent.memory.rolling_sql_history import RollingSQLHistory
+
+# from typing import TYPE_CHECKING
+# if TYPE_CHECKING:
+#     from agent.memory.manager import MemoryManager
 from agent.memory.extractor import extract_memory_kv_chain
 from agent.memory.manager_async import append_chat, load_memory, save_memory, clear_memory, DB_PATH
 from agent.memory.engine import checkpoint_db
@@ -23,6 +23,8 @@ def get_chat_prompt():
         [
             (
                 "system",
+                #                 """You are an in-car AI assistant. Detect user language (zh-Hant, en, ja) and answer in that language. Be concise (≤50 chars). No emoji.
+                # """,
                 """
                 【語言】偵測並使用用戶語言（繁中／英／日），依使用者輸入語言回應不得切換。
                 【語氣】溫暖、精簡、體貼，如同坐在駕駛旁的夥伴。
@@ -46,14 +48,7 @@ def get_chat_prompt():
     )
 
 
-def get_chat_chain(user_id: str, model):
-
-    message_history = RollingSQLHistory(
-        session_id=user_id,
-        connection=sync_engine,
-        window_size=40,
-    )
-
+def get_chat_chain(user_id: str, model, mem_mgr: "MemoryManager"):
     prompt = get_chat_prompt()
     extract_chain = extract_memory_kv_chain(model)
 
@@ -105,12 +100,18 @@ def get_chat_chain(user_id: str, model):
 
         asyncio.create_task(_extract())
 
-        history = await message_history.aget_messages()
+        mem_vars = await mem_mgr.summary.aload_memory_variables({})
+        chat_history = mem_vars.get("history", [])
 
-        reply = await router.ainvoke({"question": user_input, "chat_history": history})
+        # MAX_LLM_HISTORY = 12
+        # raw_history = mem_vars.get("history", [])
+        # chat_history = raw_history[-MAX_LLM_HISTORY:]
 
-        message_history.add_user_message(user_input)
-        message_history.add_ai_message(reply)
+        # chat_history = await mem_mgr._store.aget_messages()
+        print(chat_history)
+        reply = await router.ainvoke({"question": user_input, "chat_history": chat_history})
+
+        await mem_mgr.save_turn(user_input, reply)
         return reply
 
     llm_part = prompt | model
