@@ -107,12 +107,14 @@ python-dotenv==1.1.0
 pytz==2025.2
 PyYAML==6.0.2
 referencing==0.36.2
+regex==2024.11.6
 requests==2.32.4
 requests-oauthlib==2.0.0
 requests-toolbelt==1.0.0
 rich==14.0.0
 rpds-py==0.25.1
 rsa==4.9.1
+safetensors==0.5.3
 shellingham==1.5.4
 six==1.17.0
 smmap==5.0.2
@@ -128,6 +130,7 @@ tokenizers==0.21.1
 tomli==2.2.1
 tomlkit==0.13.3
 tqdm==4.67.1
+transformers==4.52.4
 typer==0.16.0
 typing-inspect==0.9.0
 typing-inspection==0.4.1
