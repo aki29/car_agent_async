@@ -5,10 +5,10 @@ from langchain.prompts import PromptTemplate
 from agent.memory.rolling_sql_history import RollingSQLHistory
 
 
-# def create_summary_memory(
-# llm: BaseLanguageModel, token_limit: int = 1500, chat_memory: RollingSQLHistory = None
 def create_summary_memory(
-    llm: BaseLanguageModel, token_limit: int = 1500
+    llm: BaseLanguageModel,
+    token_limit: int = 1500,
+    chat_memory: RollingSQLHistory | None = None,
 ) -> ConversationSummaryBufferMemory:
     summary_prompt = PromptTemplate(
         input_variables=["summary", "new_lines"],
@@ -20,8 +20,10 @@ def create_summary_memory(
     )
     return ConversationSummaryBufferMemory(
         llm=llm,
-        # chat_memory=chat_memory,
+        chat_memory=chat_memory,
         prompt=summary_prompt,
         max_token_limit=token_limit,
-        return_messages=True,  #
+        return_messages=True,
+        memory_key="history",
+        summary_key="summary",
     )

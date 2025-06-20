@@ -4,8 +4,7 @@ from agent.memory.rolling_sql_history import RollingSQLHistory
 from langchain.memory import ConversationBufferMemory
 from agent.memory.summary_memory import create_summary_memory
 from agent.memory.engine import sync_engine
-
-import sys, os
+import sys, os, asyncio
 
 
 class SuppressStdout:
@@ -31,26 +30,36 @@ class MemoryManager:
     ):
         with SuppressStdout():
             self._store = RollingSQLHistory(
-                session_id=session_id, connection=sync_engine, window_size=max_messages
+                session_id=session_id,
+                connection=sync_engine,
+                window_size=max_messages,
             )
+
             self.history = ConversationBufferMemory(
                 chat_memory=self._store,
                 return_messages=True,
                 memory_key="chat_history",
             )
-            self.summary = create_summary_memory(llm, token_limit)
-            # self.summary = create_summary_memory(llm, chat_memory=self._store, token_limit=1500)
+
+            self.summary = create_summary_memory(
+                llm,
+                token_limit,
+                chat_memory=self._store,
+            )
             # self.memory = CombinedMemory(memories=[self.history, self.summary])
 
     # def get(self):
     #     return self.memory
 
     async def save_turn(self, user_text: str, ai_text: str):
-        # with SuppressStdout():
         content = ai_text.content if hasattr(ai_text, "content") else str(ai_text)
-        self._store.add_user_message(user_text)
-        self._store.add_ai_message(content)
-        await self.summary.asave_context(
-            {"input": user_text},
-            {"output": content},
+
+        # self._store.add_user_message(user_text)
+        # self._store.add_ai_message(content)
+
+        asyncio.create_task(
+            self.summary.asave_context(
+                {"input": user_text},
+                {"output": content},
+            )
         )

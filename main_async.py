@@ -3,7 +3,6 @@ from termcolor import colored
 from dotenv import load_dotenv, find_dotenv
 from aioconsole import ainput
 from langchain_ollama import ChatOllama, OllamaEmbeddings
-
 from agent.chains.chat_chain_async import get_chat_chain
 from agent.memory.manager_async import init_db
 from langchain.globals import set_debug, set_verbose, set_llm_cache
@@ -25,8 +24,6 @@ set_llm_cache(InMemoryCache())  # new cache everytime
 # os.environ["TRANSFORMERS_NO_PYTORCH"] = "1"
 
 load_dotenv(find_dotenv())
-
-timezone = pytz.timezone("Asia/Taipei")
 
 
 def signal_handler(sig, frame):
@@ -90,7 +87,7 @@ async def main():
     model, embed, mem = init_models()
     await init_db()
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
-    mem_mgr = MemoryManager(mem, session_id=user_id)
+    mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=20)
     chat = get_chat_chain(user_id, model, mem_mgr)
     asyncio.create_task(periodic_checkpoint())
     print("\n[In-Car Assistant STREAMING mode. Type /exit to end.]")

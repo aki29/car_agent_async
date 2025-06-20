@@ -32,6 +32,13 @@ class RollingSQLHistory(SQLChatMessageHistory):
     async def aadd_message(self, message) -> None:
         await asyncio.to_thread(self.add_message, message)
 
+    async def aadd_messages(self, messages) -> None:
+        await asyncio.to_thread(self.add_messages, messages)
+
+    def add_messages(self, messages) -> None:
+        for m in messages:
+            self.add_message(m)
+
     def __enter__(self):
         return self
 
