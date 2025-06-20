@@ -1,5 +1,5 @@
 # agent/memory/manager.py
-from langchain.memory import CombinedMemory
+# from langchain.memory import CombinedMemory
 from agent.memory.rolling_sql_history import RollingSQLHistory
 from langchain.memory import ConversationBufferMemory
 from agent.memory.summary_memory import create_summary_memory
@@ -40,10 +40,10 @@ class MemoryManager:
             )
             self.summary = create_summary_memory(llm, token_limit)
             # self.summary = create_summary_memory(llm, chat_memory=self._store, token_limit=1500)
-            self.memory = CombinedMemory(memories=[self.history, self.summary])
+            # self.memory = CombinedMemory(memories=[self.history, self.summary])
 
-    def get(self):
-        return self.memory
+    # def get(self):
+    #     return self.memory
 
     async def save_turn(self, user_text: str, ai_text: str):
         # with SuppressStdout():
