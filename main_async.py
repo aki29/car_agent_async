@@ -9,7 +9,8 @@ from langchain.globals import set_debug, set_verbose, set_llm_cache
 from langchain_core.caches import InMemoryCache
 from agent.memory.engine import checkpoint_db
 from agent.memory.manager import MemoryManager
-
+from agent.rag import RAGManager
+import agent.rag as rag_mod
 
 # set_debug(True)
 # set_verbose(True)
@@ -85,10 +86,15 @@ def init_models():
 
 async def main():
     model, embed, mem = init_models()
+    global rag_manager
+    # rag_manager = RAGManager(embed)
+    rag_mod.rag_manager = RAGManager(embed)
+    await rag_mod.rag_manager.ainit()
     await init_db()
+    # rag_mod.rag_manager = rag_manager
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
     mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=20)
-    chat = get_chat_chain(user_id, model, mem_mgr)
+    chat = get_chat_chain(user_id, model, mem_mgr,rag_mod.rag_manager)
     asyncio.create_task(periodic_checkpoint())
     print("\n[In-Car Assistant STREAMING mode. Type /exit to end.]")
     try:

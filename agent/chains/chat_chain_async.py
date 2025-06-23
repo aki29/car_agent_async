@@ -9,6 +9,7 @@ from langchain_core.runnables import (
 from agent.memory.extractor import extract_memory_kv_chain
 from agent.memory.manager_async import load_memory, save_memory, clear_memory
 from agent.memory.engine import checkpoint_db
+from agent.rag import rag_manager
 import re
 from datetime import datetime
 import pytz
@@ -57,7 +58,7 @@ def get_chat_prompt():
     )
 
 
-def get_chat_chain(user_id: str, model, mem_mgr):
+def get_chat_chain(user_id: str, model, mem_mgr, rag):
     prompt = get_chat_prompt()
     extract_chain = extract_memory_kv_chain(model)
 
@@ -65,6 +66,37 @@ def get_chat_chain(user_id: str, model, mem_mgr):
         r"( ?(?:what(?:'s|\s+is)?\s+the\s+)?time\b|幾點|現在.*幾點|今何時)", re.I
     )
     _DATE_PAT = re.compile(r"( ?(?:what(?:'s|\s+is)?\s+the\s+)?date\b|今天幾號|日期|何日)", re.I)
+    _POI_PAT = re.compile(r"(餐廳|咖啡|加油站|停車場|poi|附近)", re.I)
+
+    async def _answer_with_poi(input_dict):
+        q = input_dict["question"]
+        user_profile = input_dict.get("user_profile", "")
+        docs = await rag.query_poi(q, user_loc=None)
+        context = "\n".join(d.page_content for d in docs)
+
+        prompt_tmpl = ChatPromptTemplate.from_messages(
+            [
+                (
+                    "system",
+                    """
+                    You are an in-car assistant. Here are the POI(Point of Interest)s found from RAG; reply warmly and concisely (>30 characters, ≤ 100 characters) to match user preferences.\n
+                    [Found POIs]\n{context}\n\n
+                    """,
+                ),
+                ("system", "[User Data]\n{user_profile}\n\n"),
+                ("human", "{question}"),
+            ]
+        )
+        return await (prompt_tmpl | model).ainvoke(
+            {
+                "user_profile": user_profile,
+                "context": context,
+                "question": q,
+            }
+        )
+
+    def is_poi(d):
+        return bool(_POI_PAT.search(d["question"]))
 
     def is_time(d):
         return bool(_TIME_PAT.search(d["question"]))
@@ -96,6 +128,7 @@ def get_chat_chain(user_id: str, model, mem_mgr):
 
     time_node = RunnableLambda(lambda d: _fmt_time(detect_lang(d["question"])))
     date_node = RunnableLambda(lambda d: _fmt_date(detect_lang(d["question"])))
+    poi_node = RunnableLambda(_answer_with_poi)
 
     def is_memory(d):
         return d.get("command") == "memory"
@@ -158,7 +191,6 @@ def get_chat_chain(user_id: str, model, mem_mgr):
         reply = await router.ainvoke(
             {"question": user_input, "chat_history": chat_history, "user_profile": profile_text}
         )
-
         await mem_mgr.save_turn(user_input, reply)
         return reply
 
@@ -166,6 +198,7 @@ def get_chat_chain(user_id: str, model, mem_mgr):
     router = RunnableBranch(
         (is_time, time_node),
         (is_date, date_node),
+        (is_poi, poi_node),
         (is_memory, memory_node),
         (is_clear, clear_node),
         (is_exit, exit_node),
