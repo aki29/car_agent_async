@@ -46,7 +46,6 @@ humanfriendly==10.0
 idna==3.10
 importlib_metadata==8.7.0
 importlib_resources==6.5.2
-Jinja2==3.1.6
 jsonpatch==1.33
 jsonpointer==3.0.0
 jsonschema==4.24.0
@@ -68,15 +67,13 @@ langgraph-sdk==0.1.70
 langserve==0.3.1
 langsmith==0.3.45
 markdown-it-py==3.0.0
-MarkupSafe==3.0.2
 marshmallow==3.26.1
 mdurl==0.1.2
 mmh3==5.1.0
 mpmath==1.3.0
 multidict==6.4.4
 mypy_extensions==1.1.0
-networkx==3.4.2
-numpy==1.26.4
+numpy==2.2.6
 oauthlib==3.2.2
 ollama==0.5.1
 onnxruntime==1.22.0
@@ -132,7 +129,6 @@ termcolor==3.1.0
 tokenizers==0.21.1
 tomli==2.2.1
 tomlkit==0.13.3
-torch @ file:///home/ctk-agx/workspaces/tmp/torch-2.7.0-cp310-cp310-linux_aarch64.whl
 tqdm==4.67.1
 transformers==4.52.4
 typer==0.16.0

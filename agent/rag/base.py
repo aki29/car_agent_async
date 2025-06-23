@@ -27,7 +27,7 @@ class BaseRAG:
         if self.vs is None:
             await self.ainit()
         return self.vs.as_retriever(
-            search_type="mmr", search_kwargs={"k": k, "score_threshold": 0.7}
+            search_type="mmr", search_kwargs={"k": k, "score_threshold": 0.5}
         )(query)
 
 

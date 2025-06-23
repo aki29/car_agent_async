@@ -60,8 +60,8 @@ def init_models():
 
     llm = ChatOllama(**critical_cfg, cache=True)
     embed = OllamaEmbeddings(
-        base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         model=os.getenv("EMBEDDINGS_MODEL_NAME", "nomic-embed-text:latest"),
+        base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         keep_alive=-1,
         num_thread=4,
         # num_ctx=512,
@@ -94,7 +94,7 @@ async def main():
     # rag_mod.rag_manager = rag_manager
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
     mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=20)
-    chat = get_chat_chain(user_id, model, mem_mgr,rag_mod.rag_manager)
+    chat = get_chat_chain(user_id, model, mem_mgr, rag_mod.rag_manager)
     asyncio.create_task(periodic_checkpoint())
     print("\n[In-Car Assistant STREAMING mode. Type /exit to end.]")
     try:

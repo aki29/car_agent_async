@@ -3,12 +3,16 @@ from pathlib import Path
 from langchain_ollama import OllamaEmbeddings
 from . import RAGManager
 import shutil
+from dotenv import load_dotenv, find_dotenv
+import os
+
+load_dotenv(find_dotenv())
 
 
 async def _build(domain: str, force: bool = False):
     embed = OllamaEmbeddings(
-        model="nomic-embed-text:latest",
-        base_url="http://localhost:11434",
+        model=os.getenv("EMBEDDINGS_MODEL_NAME", "nomic-embed-text:latest"),
+        base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         num_thread=2,
         keep_alive=-1,
     )
