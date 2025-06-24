@@ -35,11 +35,11 @@ class MemoryManager:
                 window_size=max_messages,
             )
 
-            self.history = ConversationBufferMemory(
-                chat_memory=self._store,
-                return_messages=True,
-                memory_key="chat_history",
-            )
+            # self.history = ConversationBufferMemory(
+            #     chat_memory=self._store,
+            #     return_messages=True,
+            #     memory_key="chat_history",
+            # )
 
             self.summary = create_summary_memory(
                 llm,

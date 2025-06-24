@@ -1,18 +1,20 @@
-import asyncio
+import re, pytz, asyncio
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import (
     RunnableBranch,
     RunnableLambda,
     RunnablePassthrough,
+    RunnableParallel,
 )
 from agent.memory.extractor import extract_memory_kv_chain
 from agent.memory.manager_async import load_memory, save_memory, clear_memory
 from agent.memory.engine import checkpoint_db
-from agent.rag import rag_manager
-import re
 from datetime import datetime
-import pytz
+from agent.chains.classify_chain import classify_chain
+
+# from langchain_core.runnables import RunnableWithMessageHistory
+from operator import itemgetter
 
 tz = pytz.timezone("Asia/Taipei")  # 若未來要自動偵測車機時區，可改成 time.tznamei
 _RE_JP = re.compile(r"[ぁ-んァ-ン一-龯]")
@@ -52,7 +54,8 @@ def get_chat_prompt():
                 # Avoid repeating words or phrases. Keep your language clear, natural, supportive, sincere, and friendly.""",
             ),
             ("system", "【使用者資料】\n{user_profile}"),
-            MessagesPlaceholder(variable_name="chat_history"),
+            ("system", "【歷史】{chat_history}"),
+            # MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),
         ]
     )
@@ -61,12 +64,6 @@ def get_chat_prompt():
 def get_chat_chain(user_id: str, model, mem_mgr, rag):
     prompt = get_chat_prompt()
     extract_chain = extract_memory_kv_chain(model)
-
-    _TIME_PAT = re.compile(
-        r"( ?(?:what(?:'s|\s+is)?\s+the\s+)?time\b|幾點|現在.*幾點|今何時)", re.I
-    )
-    _DATE_PAT = re.compile(r"( ?(?:what(?:'s|\s+is)?\s+the\s+)?date\b|今天幾號|日期|何日)", re.I)
-    _POI_PAT = re.compile(r"(餐廳|咖啡|加油站|停車場|poi|附近)", re.I)
 
     async def _answer_with_poi(input_dict):
         q = input_dict["question"]
@@ -95,20 +92,11 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
             }
         )
 
-    def is_poi(d):
-        return bool(_POI_PAT.search(d["question"]))
-
-    def is_time(d):
-        return bool(_TIME_PAT.search(d["question"]))
-
-    def is_date(d):
-        return bool(_DATE_PAT.search(d["question"]))
-
     def _fmt_time(lang: str) -> str:
         now = datetime.now(tz)
-        hour = now.strftime("%-I")  # 去掉前導 0
+        hour = now.strftime("%-I")
         minute = now.strftime("%M")
-        ampm = now.strftime("%p")  # 'AM' / 'PM'
+        ampm = now.strftime("%p")
         if lang == "zh":
             ampm = "上午" if ampm == "AM" else "下午"
             return f"現在是{ampm} {hour}:{minute}"
@@ -129,19 +117,6 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
     time_node = RunnableLambda(lambda d: _fmt_time(detect_lang(d["question"])))
     date_node = RunnableLambda(lambda d: _fmt_date(detect_lang(d["question"])))
     poi_node = RunnableLambda(_answer_with_poi)
-
-    def is_memory(d):
-        return d.get("command") == "memory"
-
-    def is_clear(d):
-        return d.get("command") == "clear"
-
-    def is_exit(d):
-        return d.get("command") == "exit"
-
-    memory_node = RunnableLambda(lambda d: f"[Memory] {d['mem'] or 'No Data.'}")
-    clear_node = RunnableLambda(lambda d: d["__payload"])
-    exit_node = RunnableLambda(lambda d: "")
 
     async def store_and_extract(input_dict):
         user_input = input_dict["question"].strip()
@@ -164,6 +139,17 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         if user_input == "/exit":
             return ""
 
+        def compress_history(msgs, max_pairs=3, max_len=40):
+            keep = msgs[-max_pairs * 2 :]
+            out = []
+            for m in keep:
+                role = "Human" if m.type == "human" else "AI"
+                text = m.content.strip().replace("\n", " ")[:max_len]
+                if len(m.content) > max_len:
+                    text += "…"
+                out.append(f"{role}: {text}")
+            return out
+
         async def _extract():
             try:
                 ext = await extract_chain.ainvoke({"content": user_input})
@@ -181,29 +167,62 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         asyncio.create_task(_extract())
 
         mem_vars = await mem_mgr.summary.aload_memory_variables({})
-        chat_history = mem_vars.get("history", [])
+        raw_msgs = mem_vars.get("history", [])
+        compact_history = compress_history(raw_msgs, max_pairs=8, max_len=80)
 
         # mem_vars = mem_mgr.history.load_memory_variables({})
         # chat_history = mem_vars.get("chat_history", [])
+        # print("CCC", type(chat_history), chat_history)
+
         profile_dict = await load_memory(user_id)
         profile_text = "\n".join(f"{k}: {v}" for k, v in profile_dict.items())
-        # print("AKI-->", profile_text)
         reply = await router.ainvoke(
-            {"question": user_input, "chat_history": chat_history, "user_profile": profile_text}
+            {
+                "question": user_input,
+                "chat_history": compact_history,
+                "user_profile": profile_text,
+            }
         )
+        print(reply)
         await mem_mgr.save_turn(user_input, reply)
         return reply
 
+    from termcolor import colored
+
+    def get_message(input):
+        print(colored(str(type(input)) + ": " + f"{input}", "yellow", attrs=["bold"]))
+        return input
+
     llm_part = prompt | model
-    router = RunnableBranch(
-        (is_time, time_node),
-        (is_date, date_node),
-        (is_poi, poi_node),
-        (is_memory, memory_node),
-        (is_clear, clear_node),
-        (is_exit, exit_node),
-        RunnablePassthrough() | llm_part,
+
+    CHAIN_MAP = {
+        "time": time_node,
+        "date": date_node,
+        "poi": poi_node,
+        "chat": llm_part,
+        "music": llm_part,
+        "navigation": llm_part,
+        "guide": llm_part,
+        "news": llm_part,
+    }
+
+    parallel = RunnableParallel(
+        route={"input": itemgetter("question")}
+        | classify_chain
+        | get_message
+        | RunnableLambda(lambda r: r if isinstance(r, dict) else r.model_dump()),
+        payload=RunnablePassthrough(),
     )
+    # | (lambda r: r.model_dump())
+    from pprint import pprint
+
+    async def _dispatch(d):
+        dest = d["route"]["destination"]
+        pprint(d)
+        chain = CHAIN_MAP[dest]
+        return await chain.ainvoke(d["payload"])
+
+    router = parallel | RunnableLambda(_dispatch)
 
     chain = RunnableLambda(store_and_extract)
     return chain | StrOutputParser()

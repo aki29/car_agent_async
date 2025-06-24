@@ -4,7 +4,7 @@ from dotenv import load_dotenv, find_dotenv
 from aioconsole import ainput
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from agent.chains.chat_chain_async import get_chat_chain
-from agent.memory.manager_async import init_db
+from agent.memory.manager_async import init_db, load_memory
 from langchain.globals import set_debug, set_verbose, set_llm_cache
 from langchain_core.caches import InMemoryCache
 from agent.memory.engine import checkpoint_db
@@ -47,8 +47,10 @@ def init_models():
         model=os.getenv("LLM_MODEL_NAME", "gemma3:4b"),
         base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         keep_alive=-1,
-        num_ctx=1536,
-        num_predict=64,
+        # num_ctx=1536,
+        # num_predict=64,
+        num_ctx=1024,
+        num_predict=12,
         num_thread=6,
         temperature=0.4,
         top_k=50,
@@ -71,16 +73,30 @@ def init_models():
         model=os.getenv("MEM_MODEL_NAME", "phi3:latest"),  # or gemma:1b
         base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         keep_alive=-1,
-        num_ctx=512,
-        num_predict=64,
-        num_thread=4,
-        temperature=0.15,
+        num_ctx=1024,
+        num_predict=12,
+        num_thread=6,
+        temperature=0.0,
         top_k=30,
-        top_p=0.9,
-        repeat_penalty=1.2,
+        top_p=0.15,
+        repeat_penalty=1.15,
+        seed=42,
         stop=["<END>"],
     )
+
     mem = ChatOllama(**mem_cfg, cache=True)
+
+    # ChatOllama.get_token_ids = lambda self, text: text.split()
+
+    import math
+
+    def _cheap_tokenizer(self, text: str):
+
+        n = max(1, math.ceil(len(text.encode('utf-8')) / 4))
+        return [None] * n
+
+    ChatOllama.get_token_ids = _cheap_tokenizer
+
     return llm, embed, mem
 
 
@@ -93,6 +109,7 @@ async def main():
     await init_db()
     # rag_mod.rag_manager = rag_manager
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
+    await load_memory(user_id)
     mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=20)
     chat = get_chat_chain(user_id, model, mem_mgr, rag_mod.rag_manager)
     asyncio.create_task(periodic_checkpoint())

@@ -6,7 +6,7 @@ import shutil
 from dotenv import load_dotenv, find_dotenv
 import os
 
-load_dotenv(find_dotenv())
+# load_dotenv(find_dotenv())
 
 
 async def _build(domain: str, force: bool = False):
