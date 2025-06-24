@@ -23,14 +23,6 @@ class BaseRAG:
                 embedding_function=self.embed_model, persist_directory=str(self.store_dir)
             )
 
-    async def aretrieve(self, query: str, k: int = 6):
-        if self.vs is None:
-            await self.ainit()
-        return self.vs.as_retriever(
-            search_type="mmr", search_kwargs={"k": k, "score_threshold": 0.5}
-        )(query)
-
-
     # agent/rag/base.py
     async def aretrieve(self, query: str, k: int = 6):
         if self.vs is None:
@@ -42,11 +34,10 @@ class BaseRAG:
         )
 
         # LangChain retriever 支援 Runnable 介面 (ainvoke)，也有 aget_relevant_documents
-        if hasattr(retriever, "ainvoke"):                 # 0.2↑ 推薦
+        if hasattr(retriever, "ainvoke"):  # 0.2↑ 推薦
             return await retriever.ainvoke(query)
-        else:                                             # 舊版備援
+        else:  # 舊版備援
             return await retriever.aget_relevant_documents(query)
-
 
     # --------- helpers ---------
     def _build_vectorstore(self):
