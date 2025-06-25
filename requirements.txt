@@ -52,11 +52,11 @@ jsonpointer==3.0.0
 jsonschema==4.24.0
 jsonschema-specifications==2025.4.1
 kubernetes==33.1.0
-langchain==0.3.25
+langchain==0.3.26
 langchain-chroma==0.2.4
 langchain-cli==0.0.36
-langchain-community==0.3.25
-langchain-core==0.3.65
+langchain-community==0.3.26
+langchain-core==0.3.66
 langchain-experimental==0.3.4
 langchain-ollama==0.3.3
 langchain-text-splitters==0.3.8

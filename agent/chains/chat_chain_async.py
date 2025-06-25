@@ -46,19 +46,19 @@ def get_chat_prompt(lang_hint: str = ""):
             ("system", lang_hint),
             (
                 "system",
-                """
-                 You are an intelligent and friendly in-car voice assistant.
-                【語言】偵測並使用用戶語言（繁中／英／日），依使用者輸入語言回應不得切換。
-                【語氣】溫暖、精簡、體貼，如同坐在駕駛旁的夥伴。   
-                【思考】隱藏推理，只輸出最終答案。               
-                【記憶】用戶透露偏好或重要資訊時，親切回應並以唯一key存檔，後續直接個性化運用。
-                【釐清】有疑慮時，可禮貌提問確認。
-                """,
+                """You are an intelligent and friendly in-car voice assistant.
+【語氣】溫暖、精簡、體貼，如同坐在駕駛旁的夥伴。
+【思考】隱藏推理，只輸出最終答案。
+【記憶】用戶透露偏好或重要資訊時，親切回應並以唯一key存檔，後續直接個性化運用。
+【釐清】有疑慮時，可禮貌提問確認。
+【回答策略】若使用者提問過於籠統或範圍過大（例如「有哪些服務」「今天有什麼新聞」「有推薦的餐廳嗎」），
+請先主動列出「最相關的 3～5 條具體選項」，每條 ≤20 字，
+列表完畢後，在同一段話最後加上一句同語言的釐清句，
+格式：「想了解哪一項的詳細內容？」（日文請用「どれについて詳しく知りたいですか？」；英文請用「Which one would you like to know more about？」）。""",
             ),
             (
                 "system",
-                """
-【禁止符號】, ， . 。 ！ ! ？ ? ： : ； ; 「 」 『 』 ‘ ’ “ ” - — … 、請完全不要輸出以上任何符號，保留空格即可。
+                """【禁止符號】, ， . 。 ！ ! ？ ? ： : ； ; 「 」 『 』 ‘ ’ “ ” - — … 、請完全不要輸出以上任何符號，保留空格即可。
 
 【示例】
 ユーザー: おはよう
@@ -72,6 +72,7 @@ Assistant: Good morning Have a wonderful day
 """,
             ),
             ("system", "【使用者資料】\n{user_profile}"),
+            ("system", "【歷史使用】僅在與當前問題明確相關時才引用歷史 其他內容請忽略"),
             ("system", "【歷史】{chat_history}"),
             # MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),
@@ -134,9 +135,13 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
             return now.strftime("今日は %Y年%m月%d日 (%A) です")
         return now.strftime("Today is %A, %Y-%m-%d")
 
+    def strip_punct(text: str) -> str:
+        return re.sub(r"[，,。.！!？?:：;；…\-—「」『』‘’“”]", "", text).strip()
+
     time_node = RunnableLambda(lambda d: _fmt_time(detect_lang(d["question"])))
     date_node = RunnableLambda(lambda d: _fmt_date(detect_lang(d["question"])))
     poi_node = RunnableLambda(_answer_with_poi)
+    clean_node = RunnableLambda(strip_punct)
 
     async def store_and_extract(input_dict):
         user_input = input_dict["question"].strip()
@@ -190,7 +195,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
         mem_vars = await mem_mgr.summary.aload_memory_variables({})
         raw_msgs = mem_vars.get("history", [])
-        compact_history = compress_history(raw_msgs, max_pairs=8, max_len=80)
+        compact_history = compress_history(raw_msgs, max_pairs=4, max_len=60)
 
         # mem_vars = mem_mgr.history.load_memory_variables({})
         # chat_history = mem_vars.get("chat_history", [])
@@ -205,22 +210,21 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
                 "user_profile": profile_text,
             }
         )
-        # print(reply)
         await mem_mgr.save_turn(user_input, reply)
+        print(reply)
         return reply
 
-    # from termcolor import colored
+    from termcolor import colored
 
-    # def get_message(input):
-    #     print(colored(str(type(input)) + ": " + f"{input}", "yellow", attrs=["bold"]))
-    #     return input
+    def get_message(input):
+        print(colored(str(type(input)) + ": " + f"{input}", "yellow", attrs=["bold"]))
+        return input
 
-    # llm_part = prompt | model
     async def _run_llm(d):
         lang_code = detect_lang(d["question"])
         lang_hint = LANG_HINT[lang_code]
         dyn_prompt = get_chat_prompt(lang_hint)
-        chain = dyn_prompt | model
+        chain = dyn_prompt | get_message | model
         return await chain.ainvoke(d)
 
     llm_part = RunnableLambda(_run_llm)
@@ -242,7 +246,6 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         | RunnableLambda(lambda r: r if isinstance(r, dict) else r.model_dump()),
         payload=RunnablePassthrough(),
     )
-    # | (lambda r: r.model_dump())
 
     async def _dispatch(d):
         dest = d["route"]["destination"]
@@ -253,4 +256,4 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
     router = parallel | RunnableLambda(_dispatch)
 
     chain = RunnableLambda(store_and_extract)
-    return chain | StrOutputParser()
+    return chain | StrOutputParser() | clean_node
