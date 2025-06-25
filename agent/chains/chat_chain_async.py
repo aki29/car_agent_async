@@ -1,4 +1,4 @@
-import re, pytz, asyncio
+import re, pytz, asyncio, time
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.runnables import (
@@ -12,40 +12,21 @@ from agent.memory.manager_async import load_memory, save_memory, clear_memory
 from agent.memory.engine import checkpoint_db
 from datetime import datetime
 from agent.chains.classify_chain import classify_chain
-
-# from langchain_core.runnables import RunnableWithMessageHistory
 from operator import itemgetter
 from pprint import pprint
-import fasttext, pathlib
-from pathlib import Path
+from agent.utils.lang import LangDetector
 
-_MODEL_FN = Path(__file__).parent / "lid.176.ftz"
-lan_model = fasttext.load_model(str(_MODEL_FN))
-
-tz = pytz.timezone("Asia/Taipei")  # 若未來要自動偵測車機時區，可改成 time.tznamei
-_RE_JP = re.compile(r"[ぁ-んァ-ン一-龯]")
-_RE_KANA = re.compile(r"[ぁ-んァ-ン]")
-_RE_ZH = re.compile(r"[\u4e00-\u9fff]")
-
-
-# def detect_lang(text: str) -> str:  # 'ja' | 'zh' | 'en'
-#     # if _RE_JP.search(text):
-#     if _RE_KANA.search(text):
-#         return "ja"
-#     return "zh" if _RE_ZH.search(text) else "en"
+lang_det = LangDetector()
 
 
 def detect_lang(text: str) -> str:
-    if _RE_KANA.search(text):
-        return "ja"
-    if _RE_ZH.search(text):
-        return "zh"
-    lbl, _ = lan_model.predict(text, k=1)
-    return "ja" if lbl[0].endswith("ja") else "zh" if lbl[0].startswith("zh") else "en"
+    return lang_det.detect(text)
 
 
+tz = pytz.timezone("Asia/Taipei")  # 若未來要自動偵測車機時區，可改成 time.tznamei
 LANG_HINT = {
-    "zh": "以下回答必須使用【繁體中文】，不得包含任何英文或日文。",
+    "zh-tw": "以下回答必須使用【繁體中文】，不得包含任何英文或日文。",
+    "zh-cn": "接下來所有回答請使用【简体中文】，不得包含任何英文或日文。",
     "en": "From now on, answer strictly in **English**. Do NOT output any Chinese or Japanese.",
     "ja": (
         "これ以降の回答は必ず【日本語】で書いてください。"
@@ -88,7 +69,6 @@ Assistant: Good morning Have a wonderful day
             ("system", "【使用者資料】\n{user_profile}"),
             ("system", "【歷史使用】僅在與當前問題明確相關時才引用歷史 其他內容請忽略"),
             ("system", "【歷史】{chat_history}"),
-            # MessagesPlaceholder(variable_name="chat_history"),
             ("human", "{question}"),
         ]
     )
@@ -132,7 +112,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         hour = now.strftime("%-I")
         minute = now.strftime("%M")
         ampm = now.strftime("%p")
-        if lang == "zh":
+        if lang == "zh-tw":
             ampm = "上午" if ampm == "AM" else "下午"
             return f"現在是{ampm} {hour}:{minute}"
         if lang == "ja":
@@ -143,7 +123,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
     def _fmt_date(lang: str) -> str:
         now = datetime.now(tz)
-        if lang == "zh":
+        if lang == "zh-tw":
             return now.strftime("今天是 %Y/%m/%d (%A)")
         if lang == "ja":
             return now.strftime("今日は %Y年%m月%d日 (%A) です")
@@ -159,8 +139,6 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
     async def store_and_extract(input_dict):
         user_input = input_dict["question"].strip()
-        # lang_code  = detect_lang(user_input)
-        # lang_hint  = LANG_HINT[lang_code]
 
         if user_input == "/memory":
             mem = await load_memory(user_id)
@@ -211,6 +189,9 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         raw_msgs = mem_vars.get("history", [])
         compact_history = compress_history(raw_msgs, max_pairs=4, max_len=60)
 
+        # raw_sags = await mem_mgr._store.aget_messages()
+        # compact_history = compress_history(raw_msgs, max_pairs=4, max_len=60)
+
         # mem_vars = mem_mgr.history.load_memory_variables({})
         # chat_history = mem_vars.get("chat_history", [])
         # print("CCC", type(chat_history), chat_history)
@@ -225,7 +206,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
             }
         )
         await mem_mgr.save_turn(user_input, reply)
-        print(reply)
+        # print(reply)
         return reply
 
     from termcolor import colored

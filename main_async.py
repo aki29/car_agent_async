@@ -112,7 +112,7 @@ async def main():
     await load_memory(user_id)
     mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=512)
     chat = get_chat_chain(user_id, model, mem_mgr, rag_mod.rag_manager)
-    asyncio.create_task(periodic_checkpoint())
+    asyncio.create_task(periodic_checkpoint(60))
     print("\n[In-Car Assistant STREAMING mode. Type /exit to end.]")
     try:
         while True:
