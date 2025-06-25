@@ -47,10 +47,10 @@ def init_models():
         model=os.getenv("LLM_MODEL_NAME", "gemma3:4b"),
         base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         keep_alive=-1,
-        # num_ctx=1536,
-        # num_predict=64,
-        num_ctx=1024,
-        num_predict=12,
+        num_ctx=1536,
+        num_predict=64,
+        # num_ctx=1024,
+        # num_predict=12,
         num_thread=6,
         temperature=0.4,
         top_k=50,
@@ -110,7 +110,7 @@ async def main():
     # rag_mod.rag_manager = rag_manager
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
     await load_memory(user_id)
-    mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=20)
+    mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=512)
     chat = get_chat_chain(user_id, model, mem_mgr, rag_mod.rag_manager)
     asyncio.create_task(periodic_checkpoint())
     print("\n[In-Car Assistant STREAMING mode. Type /exit to end.]")

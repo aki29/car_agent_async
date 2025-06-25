@@ -15,6 +15,7 @@ from agent.chains.classify_chain import classify_chain
 
 # from langchain_core.runnables import RunnableWithMessageHistory
 from operator import itemgetter
+from pprint import pprint
 
 tz = pytz.timezone("Asia/Taipei")  # 若未來要自動偵測車機時區，可改成 time.tznamei
 _RE_JP = re.compile(r"[ぁ-んァ-ン一-龯]")
@@ -29,29 +30,46 @@ def detect_lang(text: str) -> str:  # 'ja' | 'zh' | 'en'
     return "zh" if _RE_ZH.search(text) else "en"
 
 
-def get_chat_prompt():
+LANG_HINT = {
+    "zh": "以下回答必須使用【繁體中文】，不得包含任何英文或日文。",
+    "en": "From now on, answer strictly in **English**. Do NOT output any Chinese or Japanese.",
+    "ja": (
+        "これ以降の回答は必ず【日本語】で書いてください。"
+        "中国語や英語の語句を一切含めてはいけません。"
+    ),
+}
+
+
+def get_chat_prompt(lang_hint: str = ""):
     return ChatPromptTemplate.from_messages(
         [
+            ("system", lang_hint),
             (
                 "system",
-                #                 """You are an in-car AI assistant. Detect user language (zh-Hant, en, ja) and answer in that language. Be concise (≤50 chars). No emoji.
-                # """,
                 """
+                 You are an intelligent and friendly in-car voice assistant.
                 【語言】偵測並使用用戶語言（繁中／英／日），依使用者輸入語言回應不得切換。
-                【語氣】溫暖、精簡、體貼，如同坐在駕駛旁的夥伴。
-                【標點】禁止 emoji、顏文字、裝飾符號、標點符號。
-                【思考】隱藏推理，只輸出最終答案。
-                【輸出限制】全文 ≤50 字；若需步驟，列 ≤3 步，每步 ≤15 字。
+                【語氣】溫暖、精簡、體貼，如同坐在駕駛旁的夥伴。   
+                【思考】隱藏推理，只輸出最終答案。               
                 【記憶】用戶透露偏好或重要資訊時，親切回應並以唯一key存檔，後續直接個性化運用。
                 【釐清】有疑慮時，可禮貌提問確認。
                 """,
-                # """
-                # You are an intelligent and friendly in-car voice assistant. You can understand and automatically respond in the language the user uses—Chinese, English, or Japanese. Your response must always match the user's language and must never switch languages.
-                # Your tone should be warm, concise, and emotionally aware, like a thoughtful companion sitting beside the driver and speaking gently.
-                # Avoid using any emojis or emoticons.
-                # When the user shares something meaningful—such as personal preferences, life events, or important information—acknowledge it kindly and store it using a unique key. Use this information in the future to provide personalized responses that meet the user's needs.
-                # If you are unsure about something, ask politely and gently.
-                # Avoid repeating words or phrases. Keep your language clear, natural, supportive, sincere, and friendly.""",
+            ),
+            (
+                "system",
+                """
+【禁止符號】, ， . 。 ！ ! ？ ? ： : ； ; 「 」 『 』 ‘ ’ “ ” - — … 、請完全不要輸出以上任何符號，保留空格即可。
+
+【示例】
+ユーザー: おはよう
+アシスタント: おはよう 素敵な一日を
+
+使用者: 早安
+助手輸出: 早安 祝您有個美好的一天
+
+User: Good morning
+Assistant: Good morning Have a wonderful day
+""",
             ),
             ("system", "【使用者資料】\n{user_profile}"),
             ("system", "【歷史】{chat_history}"),
@@ -69,7 +87,8 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         q = input_dict["question"]
         user_profile = input_dict.get("user_profile", "")
         docs = await rag.query_poi(q, user_loc=None)
-        context = "\n".join(d.page_content for d in docs)
+        # context = "\n".join(d.page_content for d in docs)
+        context = "\n".join(str(d.metadata) for d in docs)
 
         prompt_tmpl = ChatPromptTemplate.from_messages(
             [
@@ -84,13 +103,14 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
                 ("human", "{question}"),
             ]
         )
-        return await (prompt_tmpl | model).ainvoke(
+        result = await (prompt_tmpl | model).ainvoke(
             {
                 "user_profile": user_profile,
                 "context": context,
                 "question": q,
             }
         )
+        return result
 
     def _fmt_time(lang: str) -> str:
         now = datetime.now(tz)
@@ -120,6 +140,8 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
     async def store_and_extract(input_dict):
         user_input = input_dict["question"].strip()
+        # lang_code  = detect_lang(user_input)
+        # lang_hint  = LANG_HINT[lang_code]
 
         if user_input == "/memory":
             mem = await load_memory(user_id)
@@ -183,17 +205,25 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
                 "user_profile": profile_text,
             }
         )
-        print(reply)
+        # print(reply)
         await mem_mgr.save_turn(user_input, reply)
         return reply
 
-    from termcolor import colored
+    # from termcolor import colored
 
-    def get_message(input):
-        print(colored(str(type(input)) + ": " + f"{input}", "yellow", attrs=["bold"]))
-        return input
+    # def get_message(input):
+    #     print(colored(str(type(input)) + ": " + f"{input}", "yellow", attrs=["bold"]))
+    #     return input
 
-    llm_part = prompt | model
+    # llm_part = prompt | model
+    async def _run_llm(d):
+        lang_code = detect_lang(d["question"])
+        lang_hint = LANG_HINT[lang_code]
+        dyn_prompt = get_chat_prompt(lang_hint)
+        chain = dyn_prompt | model
+        return await chain.ainvoke(d)
+
+    llm_part = RunnableLambda(_run_llm)
 
     CHAIN_MAP = {
         "time": time_node,
@@ -207,18 +237,16 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
     }
 
     parallel = RunnableParallel(
-        route={"input": itemgetter("question")}
-        | classify_chain
-        | get_message
+        route={"input": itemgetter("question")} | classify_chain
+        # | get_message
         | RunnableLambda(lambda r: r if isinstance(r, dict) else r.model_dump()),
         payload=RunnablePassthrough(),
     )
     # | (lambda r: r.model_dump())
-    from pprint import pprint
 
     async def _dispatch(d):
         dest = d["route"]["destination"]
-        pprint(d)
+        # pprint(d)
         chain = CHAIN_MAP[dest]
         return await chain.ainvoke(d["payload"])
 

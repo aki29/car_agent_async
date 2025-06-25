@@ -45,7 +45,7 @@ _llm = ChatOllama(**llm_opts)
 _router_prompt = PromptTemplate.from_template(
     """你是一個意圖分類器，僅回傳{{"destination": "<time|date|poi|chat|music|navigation|guide|news>"}}。
 
-分類定義：
+**分類定義**：
 • time       ：問現在時間 (例："現在幾點?", "what time is it?")
 • date       ：問今天日期 (例："今天幾號?", "what's the date today?")
 • poi        ：問附近地點 (例："附近有加油站嗎?", "any coffee shop nearby?", "近くのレストランは？")
@@ -58,6 +58,16 @@ _router_prompt = PromptTemplate.from_template(
 **規則**
 1. 先比對關鍵詞 (中/英/日)；若無明確關鍵詞就選 chat。
 2. 只能輸出 destination；不得輸出多餘文字。
+
+**示例**
+使用者: hi
+輸出: {{"destination":"chat"}}
+
+使用者: navigate to airport
+輸出: {{"destination":"navigation"}}
+
+使用者: 你要去哪裡 日文如何說
+輸出: {{"destination":"chat"}}
 
 使用者訊息：
 {input}"""

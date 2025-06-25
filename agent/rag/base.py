@@ -30,7 +30,7 @@ class BaseRAG:
 
         retriever = self.vs.as_retriever(
             search_type="mmr",
-            search_kwargs={"k": k, "score_threshold": 0.7},
+            search_kwargs={"k": k, "score_threshold": 0.8},
         )
 
         # LangChain retriever 支援 Runnable 介面 (ainvoke)，也有 aget_relevant_documents
