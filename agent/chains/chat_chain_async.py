@@ -16,6 +16,11 @@ from agent.chains.classify_chain import classify_chain
 # from langchain_core.runnables import RunnableWithMessageHistory
 from operator import itemgetter
 from pprint import pprint
+import fasttext, pathlib
+from pathlib import Path
+
+_MODEL_FN = Path(__file__).parent / "lid.176.ftz"
+lan_model = fasttext.load_model(str(_MODEL_FN))
 
 tz = pytz.timezone("Asia/Taipei")  # 若未來要自動偵測車機時區，可改成 time.tznamei
 _RE_JP = re.compile(r"[ぁ-んァ-ン一-龯]")
@@ -23,11 +28,20 @@ _RE_KANA = re.compile(r"[ぁ-んァ-ン]")
 _RE_ZH = re.compile(r"[\u4e00-\u9fff]")
 
 
-def detect_lang(text: str) -> str:  # 'ja' | 'zh' | 'en'
-    # if _RE_JP.search(text):
+# def detect_lang(text: str) -> str:  # 'ja' | 'zh' | 'en'
+#     # if _RE_JP.search(text):
+#     if _RE_KANA.search(text):
+#         return "ja"
+#     return "zh" if _RE_ZH.search(text) else "en"
+
+
+def detect_lang(text: str) -> str:
     if _RE_KANA.search(text):
         return "ja"
-    return "zh" if _RE_ZH.search(text) else "en"
+    if _RE_ZH.search(text):
+        return "zh"
+    lbl, _ = lan_model.predict(text, k=1)
+    return "ja" if lbl[0].endswith("ja") else "zh" if lbl[0].startswith("zh") else "en"
 
 
 LANG_HINT = {
