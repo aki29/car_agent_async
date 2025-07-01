@@ -53,7 +53,7 @@ def get_chat_prompt(lang_hint: str = ""):
             ),
             (
                 "system",
-                """【禁止符號】, ， . 。 ！ ! ？ ? ： : ； ; 「 」 『 』 ‘ ’ “ ” - — … 、請完全不要輸出以上任何符號，保留空格即可。
+                """【禁止符號】, ， . 。 ！ ! ？ ? ： : ； ; 「 」 『 』 ‘ ’ “ ” - — … 、請完全不要輸出以上任何符號或換行。
 
 【示例】
 ユーザー: おはよう
@@ -78,34 +78,36 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
     prompt = get_chat_prompt()
     extract_chain = extract_memory_kv_chain(model)
 
-    async def _answer_with_poi(input_dict):
-        q = input_dict["question"]
-        user_profile = input_dict.get("user_profile", "")
-        docs = await rag.query_poi(q, user_loc=None)
-        # context = "\n".join(d.page_content for d in docs)
-        context = "\n".join(str(d.metadata) for d in docs)
+    def make_rag_node(domain_name: str):
+        async def _answer(d):
+            q = d["question"]
+            if domain_name == "manual":
+                docs = await rag.query_manual(q)
+            elif domain_name == "parking":
+                docs = await rag.query_parking(q, user_loc=d.get("user_loc"))
+            elif domain_name == "food":
+                docs = await rag.query_food(q, user_loc=d.get("user_loc"))
+            else:  # poi
+                docs = await rag.query_poi(q, user_loc=d.get("user_loc"))
+            # print(docs)
+            top_docs = docs[:4]
+            context = "\n---\n".join(x.page_content for x in top_docs)
+            prompt_tmpl = ChatPromptTemplate.from_messages(
+                [
+                    (
+                        "system",
+                        f"你是車載助手 以下是找到的 {domain_name} 資訊 "
+                        "請用最相關 3 條結果總結回答 每條 ≤25 字 不得使用標點符號和換行 "
+                        "用空格分隔條目 最後加 想了解哪一項？",
+                    ),
+                    ("system", "{context}"),
+                    ("human", "{question}"),
+                ]
+            )
 
-        prompt_tmpl = ChatPromptTemplate.from_messages(
-            [
-                (
-                    "system",
-                    """
-                    You are an in-car assistant. Here are the POI(Point of Interest)s found from RAG; reply warmly and concisely (>30 characters, ≤ 100 characters) to match user preferences.\n
-                    [Found POIs]\n{context}\n\n
-                    """,
-                ),
-                ("system", "[User Data]\n{user_profile}\n\n"),
-                ("human", "{question}"),
-            ]
-        )
-        result = await (prompt_tmpl | model).ainvoke(
-            {
-                "user_profile": user_profile,
-                "context": context,
-                "question": q,
-            }
-        )
-        return result
+            return await (prompt_tmpl | model).ainvoke({"context": context, "question": q})
+
+        return RunnableLambda(_answer)
 
     def _fmt_time(lang: str) -> str:
         now = datetime.now(tz)
@@ -134,8 +136,33 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
     time_node = RunnableLambda(lambda d: _fmt_time(detect_lang(d["question"])))
     date_node = RunnableLambda(lambda d: _fmt_date(detect_lang(d["question"])))
-    poi_node = RunnableLambda(_answer_with_poi)
     clean_node = RunnableLambda(strip_punct)
+
+    # async def _manual(d):
+    #     docs = await rag.query_manual(d["question"])
+    #     return "\n".join(x.page_content for x in docs[:3])
+
+    # async def _parking(d):
+    #     docs = await rag.query_parking(d["question"])
+    #     return "\n".join(x.page_content for x in docs[:3])
+
+    # async def _food(d):
+    #     docs = await rag.query_food(d["question"])
+    #     return "\n".join(x.page_content for x in docs[:3])
+
+    # async def _poi(d):
+    #     docs = await rag.query_poi(d["question"])
+    #     return "\n".join(x.page_content for x in docs[:3])
+
+    # manual_node = RunnableLambda(_manual)
+    # parking_node = RunnableLambda(_parking)
+    # food_node = RunnableLambda(_food)
+    # poi_node = RunnableLambda(_poi)
+
+    manual_node = make_rag_node("manual")
+    parking_node = make_rag_node("parking")
+    food_node = make_rag_node("food")
+    poi_node = make_rag_node("poi")
 
     async def store_and_extract(input_dict):
         user_input = input_dict["question"].strip()
@@ -227,11 +254,13 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
     CHAIN_MAP = {
         "time": time_node,
         "date": date_node,
-        "poi": poi_node,
         "chat": llm_part,
+        "manual": manual_node,
+        "parking": parking_node,
+        "food": food_node,
+        "poi": poi_node,
         "music": llm_part,
         "navigation": llm_part,
-        "guide": llm_part,
         "news": llm_part,
     }
 
@@ -252,3 +281,4 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
     chain = RunnableLambda(store_and_extract)
     return chain | StrOutputParser() | clean_node
+    # return chain | StrOutputParser()
