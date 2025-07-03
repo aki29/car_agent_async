@@ -1,8 +1,11 @@
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 from langchain.schema import Document
-from langchain_chroma import Chroma
+from langchain_community.vectorstores import FAISS
 from langchain.embeddings.base import Embeddings
+import faiss
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 
 
 class BaseRAG:
@@ -12,39 +15,52 @@ class BaseRAG:
         self.embed_model = embed_model
         self.data_dir = data_dir
         self.store_dir = store_dir / self.domain
-        self.vs: Chroma | None = None
+        self.faiss_index_path = self.store_dir / (self.domain + ".faiss")
+        self.faiss_doc_path = self.store_dir / (self.domain + ".pkl")
+        self.vs: FAISS | None = None
+        self.executor = ThreadPoolExecutor()
 
     # --------- public API ---------
     async def ainit(self):
-        if not self.store_dir.exists():
-            self._build_vectorstore()
-        else:
-            self.vs = Chroma(
-                embedding_function=self.embed_model, persist_directory=str(self.store_dir)
+
+        if self.faiss_index_path.exists() and self.faiss_doc_path.exists():
+            self.vs = await asyncio.get_event_loop().run_in_executor(
+                self.executor, self._load_vectorstore
             )
+        else:
+            self._build_vectorstore()
 
     async def aretrieve(self, query: str, k: int = 6):
         if self.vs is None:
             await self.ainit()
-
-        retriever = self.vs.as_retriever(
-            search_type="mmr",
-            search_kwargs={"k": k, "score_threshold": 0.8},
+        return await asyncio.get_event_loop().run_in_executor(
+            self.executor, lambda: self.vs.similarity_search(query, k=k)
         )
-
-        if hasattr(retriever, "ainvoke"):
-            return await retriever.ainvoke(query)
-        else:  #
-            return await retriever.aget_relevant_documents(query)
 
     # --------- helpers ---------
     def _build_vectorstore(self):
+
         docs = self._load_docs()
-        self.vs = Chroma.from_documents(
-            docs, embedding=self.embed_model, persist_directory=str(self.store_dir)
+        self.vs = FAISS.from_documents(docs, self.embed_model)
+        res = faiss.StandardGpuResources()
+        self.vs.index = faiss.index_cpu_to_gpu(res, 0, self.vs.index)
+
+        cpu_index = faiss.index_gpu_to_cpu(self.vs.index)
+        self.vs.index = cpu_index
+
+        self.store_dir.mkdir(parents=True, exist_ok=True)
+        self.vs.save_local(str(self.store_dir), self.domain)
+
+    def _load_vectorstore(self):
+        vs = FAISS.load_local(
+            str(self.store_dir),
+            self.embed_model,
+            index_name=self.domain,
+            allow_dangerous_deserialization=True,
         )
-        if hasattr(self.vs, "persist"):
-            self.vs.persist()
+        res = faiss.StandardGpuResources()
+        vs.index = faiss.index_cpu_to_gpu(res, 0, vs.index)
+        return vs
 
     def _load_docs(self) -> List[Document]:
         raise NotImplementedError

@@ -100,14 +100,33 @@ def init_models():
     return llm, embed, mem
 
 
+async def warmup_rag(rag_manager):
+    # print("[warmup] Preloading FAISS index and embedding model...")
+
+    async def _safe_warmup(rag, name: str):
+        try:
+            await rag.aretrieve("testing")
+            # print(f"[warmup] {name} ready.")
+        except Exception as e:
+            print(f"[warmup] {name} failed: {e}")
+
+    await asyncio.gather(
+        _safe_warmup(rag_manager.poi, "poi"),
+        _safe_warmup(rag_manager.parking, "parking"),
+        _safe_warmup(rag_manager.manual, "manual"),
+        _safe_warmup(rag_manager.food, "food"),
+    )
+
+    # print("[warmup] All RAGs initialized.\n")
+
+
 async def main():
     model, embed, mem = init_models()
     global rag_manager
-    # rag_manager = RAGManager(embed)
     rag_mod.rag_manager = RAGManager(embed)
     await rag_mod.rag_manager.ainit()
     await init_db()
-    # rag_mod.rag_manager = rag_manager
+    await warmup_rag(rag_mod.rag_manager)
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
     await load_memory(user_id)
     mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=512)

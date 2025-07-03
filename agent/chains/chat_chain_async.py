@@ -273,7 +273,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
     async def _dispatch(d):
         dest = d["route"]["destination"]
-        # pprint(d)
+        pprint(d)
         chain = CHAIN_MAP[dest]
         return await chain.ainvoke(d["payload"])
 

@@ -4,7 +4,7 @@ from typing import List
 from pydantic import BaseModel, Field
 from langchain.schema import Document
 from .base import BaseRAG
-
+import time
 
 class Eatery(BaseModel):
     type: str  # 餐廳
@@ -19,6 +19,7 @@ class FoodRAG(BaseRAG):
     domain = "food"
 
     def _load_docs(self) -> List[Document]:
+        start = time.time()
         fp = self.data_dir / "food.jsonl"
         docs: List[Document] = []
         with fp.open(encoding="utf-8") as f:
@@ -32,6 +33,7 @@ class FoodRAG(BaseRAG):
                         metadata=eatery.dict(),
                     )
                 )
+        print(f"[{self.domain}] loaded {len(docs)} docs in {time.time() - start:.2f}s")
         return docs
 
     async def aretrieve(self, query: str, k: int = 6, user_loc=None):

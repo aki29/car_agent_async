@@ -5,7 +5,7 @@ from typing import List
 from pydantic import BaseModel
 from langchain.schema import Document
 from .base import BaseRAG
-
+import time
 
 class ManualFAQ(BaseModel):
     type: str  # always "車主手冊"
@@ -19,6 +19,7 @@ class ManualRAG(BaseRAG):
     domain = "manual"
 
     def _load_docs(self) -> List[Document]:
+        start = time.time()
         faq_file = self.data_dir / "manual.jsonl"
         docs: List[Document] = []
         with faq_file.open(encoding="utf-8") as f:
@@ -38,6 +39,7 @@ class ManualRAG(BaseRAG):
                         metadata=faq.dict(),
                     )
                 )
+        print(f"[{self.domain}] loaded {len(docs)} docs in {time.time() - start:.2f}s")
         return docs
 
     async def aretrieve(self, query: str, k: int = 6):
