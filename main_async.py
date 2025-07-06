@@ -24,7 +24,7 @@ from pathlib import Path
 use_cache = os.getenv("USE_LLM_CACHE", "false").lower() == "true"
 if use_cache:
     os.makedirs(".cache", exist_ok=True)
-    set_llm_cache(SQLiteCache(database_path=".cache/langchain.db"))
+    set_llm_cache(SQLiteCache(database_path=".cache/cache.db"))
     # print("[cache] SQLite LLM cache enabled.")
     # set_llm_cache(AsyncSQLiteCache(db_path=".cache/langchain.db"))
     # print("[cache] AsyncSQLite LLM cache enabled.")
