@@ -15,6 +15,7 @@ from agent.rag import RAGManager
 import agent.rag as rag_mod
 import re
 import emoji
+from pathlib import Path
 
 # set_debug(True)
 # set_verbose(True)
@@ -138,7 +139,7 @@ async def warmup_models(llm, rag_manager):
 async def main():
     model, embed, mem = init_models()
     global rag_manager
-    rag_mod.rag_manager = RAGManager(embed)
+    rag_mod.rag_manager = RAGManager(embed, store_dir=Path(".cache/rag/"))
     await rag_mod.rag_manager.ainit()
     await init_db()
     await asyncio.gather(
@@ -181,7 +182,7 @@ async def main():
                     text = re.sub(r"[，,。.！!？?:：;；…\-—「」『』‘’“”]", "", text)
                     cleaned = emoji.replace_emoji(text, replace="")
                     # if not first_word:
-                    #     first_word = time.perf_counter() 
+                    #     first_word = time.perf_counter()
                     print(colored(cleaned, "green"), end="", flush=True)
                     response_text += cleaned
                     # response_text += chunk
@@ -209,7 +210,7 @@ async def main():
                 if first_word:
                     elapsed = first_word - start
                     print(colored(f"({elapsed:.2f}s)", "blue"))
-                    first_word=0
+                    first_word = 0
     except Exception as e:
         print(colored(f"[system error] {e}", "red"))
     finally:

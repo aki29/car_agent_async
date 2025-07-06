@@ -4,7 +4,7 @@ from datetime import datetime
 from pathlib import Path
 
 _MEMORY_L1: dict[str, dict] = {}
-_DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "ctk_user.sqlite3"
+_DEFAULT_PATH = Path(__file__).resolve().parent.parent.parent / ".cache" / "ctk_user.sqlite3"
 DB_PATH = Path(os.environ.get("CTK_USER_DB_PATH", _DEFAULT_PATH))
 
 DB_PATH.parent.mkdir(parents=True, exist_ok=True)

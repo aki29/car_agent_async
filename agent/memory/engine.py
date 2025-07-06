@@ -7,7 +7,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import OperationalError
 
 
-_DEFAULT_PATH = Path(__file__).resolve().parent.parent / "data" / "ctk_memory.sqlite3"
+_DEFAULT_PATH = Path(__file__).resolve().parent.parent.parent / ".cache" / "ctk_memory.sqlite3"
 DB_PATH = Path(os.environ.get("CTK_MEM_DB_PATH", _DEFAULT_PATH))
 
 # DB_PATH.parent.mkdir(parents=True, exist_ok=True)
