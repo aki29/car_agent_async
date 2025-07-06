@@ -12,32 +12,7 @@ from langchain_core.chat_history import HumanMessage
 from langchain_core.language_models.chat_models import BaseChatModel
 
 
-def extract_memory_kv_chain(model: BaseChatModel):
-    """
-    回傳一個 Runnable，可接受形如 {"content": <user_text>} 的 dict，
-    非同步叫用 LLM 抽取「鍵-值」資訊並以 dict 形式輸出。
-
-    Example
-    -------
-    >>> chain = extract_memory_kv_chain(llm)
-    >>> result = await chain.ainvoke({"content": "我叫小明，住台北，最愛聽爵士樂"})
-    >>> print(result)   # {"name": "小明", "location": "台北", "favorite_music": "爵士樂"}
-    """
-
-    # prompt = ChatPromptTemplate.from_messages(
-    #     [
-    #         (
-    #             "system",
-    #             "You are an information extractor. Your task is to identify any ‘attribute: value’ information in the user’s sentence.\n"
-    #             "Return only a single-line, valid JSON object; keys must be in English, and values should retain their original meaning."
-    #             "If no key-value pairs can be extracted, return an empty JSON object {{}}.",
-    #             # "你是一個資訊抽取器，工作是把使用者句子裡的『屬性: 值』資訊找出來。\n"
-    #             # "請只回傳 **單行**、有效的 JSON 物件，鍵用英文字，值保留原語意；"
-    #         # "若沒有可抽取的鍵值，請回傳空的 JSON 物件 {{}}。",
-    #         ),
-    #         ("human", "{content}"),
-    #     ]
-    # )
+def extract_memory_kv_chain(model: BaseChatModel): 
     prompt = ChatPromptTemplate.from_messages(
         [
             (

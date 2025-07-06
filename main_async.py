@@ -13,6 +13,8 @@ from agent.memory.engine import checkpoint_db
 from agent.memory.manager import MemoryManager
 from agent.rag import RAGManager
 import agent.rag as rag_mod
+import re
+import emoji
 
 # set_debug(True)
 # set_verbose(True)
@@ -61,8 +63,6 @@ def init_models():
         keep_alive=-1,
         num_ctx=1536,
         num_predict=64,
-        # num_ctx=1024,
-        # num_predict=12,
         num_thread=6,
         temperature=0.4,
         top_k=50,
@@ -70,6 +70,8 @@ def init_models():
         repeat_penalty=1.2,
         presence_penalty=0.1,
         stop=["\n\n", "<END>"],
+        stream=True,
+        # cache=True,
     )
 
     llm = ChatOllama(**critical_cfg, cache=True)
@@ -118,7 +120,7 @@ async def warmup_models(llm, rag_manager):
     async def _safe_warmup(rag, name: str):
         try:
             await rag.aretrieve("testing")
-            print(f"[warmup] {name} ready.")
+            # print(f"[warmup] {name} ready.")
         except Exception as e:
             print(f"[warmup] {name} failed: {e}")
 
@@ -146,7 +148,10 @@ async def main():
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
     await load_memory(user_id)
     mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=512)
-    chat = get_chat_chain(user_id, model, mem_mgr, rag_mod.rag_manager)
+    # chat = get_chat_chain(user_id, model, mem_mgr, rag_mod.rag_manager)
+    chains = get_chat_chain(user_id, model, mem_mgr, rag_mod.rag_manager)
+    stream_chain = chains["stream"]
+    invoke_chain = chains["invoke"]
     asyncio.create_task(periodic_checkpoint(60))
     print("\n[In-Car Assistant STREAMING mode. Type /exit to end.]")
     try:
@@ -159,15 +164,35 @@ async def main():
             start = time.perf_counter()
             response_text = ""
             try:
-                async for chunk in chat.astream(
+                # async for chunk in chat.astream(
+                first_word = 0
+                async for chunk in stream_chain.astream(
                     {"question": query},
                     config={
+                        "stream": True,
                         "configurable": {"session_id": user_id},
                     },
                 ):
-                    print(colored(chunk, "green"), end="", flush=True)
-                    response_text += chunk
+                    if hasattr(chunk, "content"):
+                        text = chunk.content
+                    else:
+                        text = str(chunk)
+
+                    text = re.sub(r"[，,。.！!？?:：;；…\-—「」『』‘’“”]", "", text)
+                    cleaned = emoji.replace_emoji(text, replace="")
+                    # if not first_word:
+                    #     first_word = time.perf_counter() 
+                    print(colored(cleaned, "green"), end="", flush=True)
+                    response_text += cleaned
+                    # response_text += chunk
                 print()  # newline after streaming
+
+                # full_reply = await invoke_chain.ainvoke(
+                #     {"question": query},
+                #     config={"configurable": {"session_id": user_id}},
+                # )
+                # response_text = full_reply
+                # print(colored(response_text, "green"), end="", flush=True)
 
                 if response_text.strip() == "":
                     print("bye！")
@@ -181,6 +206,10 @@ async def main():
             finally:
                 elapsed = time.perf_counter() - start
                 print(colored(f"({elapsed:.2f}s)", "blue"))
+                if first_word:
+                    elapsed = first_word - start
+                    print(colored(f"({elapsed:.2f}s)", "blue"))
+                    first_word=0
     except Exception as e:
         print(colored(f"[system error] {e}", "red"))
     finally:

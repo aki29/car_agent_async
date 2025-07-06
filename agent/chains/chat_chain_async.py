@@ -75,7 +75,7 @@ Assistant: Good morning Have a wonderful day
 
 
 def get_chat_chain(user_id: str, model, mem_mgr, rag):
-    prompt = get_chat_prompt()
+    # prompt = get_chat_prompt()
     extract_chain = extract_memory_kv_chain(model)
 
     def make_rag_node(domain_name: str):
@@ -234,6 +234,8 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         )
         await mem_mgr.save_turn(user_input, reply)
         # print(reply)
+        if hasattr(reply, "content"):
+            return reply.content
         return reply
 
     from termcolor import colored
@@ -246,7 +248,8 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         lang_code = detect_lang(d["question"])
         lang_hint = LANG_HINT[lang_code]
         dyn_prompt = get_chat_prompt(lang_hint)
-        chain = dyn_prompt | get_message | model
+        # chain = dyn_prompt | get_message | model
+        chain = dyn_prompt | model
         return await chain.ainvoke(d)
 
     llm_part = RunnableLambda(_run_llm)
@@ -273,12 +276,16 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
     async def _dispatch(d):
         dest = d["route"]["destination"]
-        pprint(d)
+        # pprint(d)
         chain = CHAIN_MAP[dest]
         return await chain.ainvoke(d["payload"])
 
     router = parallel | RunnableLambda(_dispatch)
 
+    # chain = RunnableLambda(store_and_extract)
+    # return chain | StrOutputParser() | clean_node
+
     chain = RunnableLambda(store_and_extract)
-    return chain | StrOutputParser() | clean_node
-    # return chain | StrOutputParser()
+    stream_chain = chain | model
+    invoke_chain = chain | StrOutputParser() | clean_node
+    return {"stream": stream_chain, "invoke": invoke_chain}
