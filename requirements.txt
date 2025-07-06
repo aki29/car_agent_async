@@ -23,7 +23,6 @@ dataclasses-json==0.6.7
 distro==1.9.0
 durationpy==0.10
 exceptiongroup==1.3.0
--e git+https://github.com/facebookresearch/faiss.git@1deb5c60e0b9656b02ea18035405984303925af1#egg=faiss&subdirectory=build/faiss/python
 fastapi==0.115.9
 fasttext==0.9.3
 filelock==3.18.0

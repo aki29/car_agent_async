@@ -22,7 +22,6 @@ class BaseRAG:
 
     # --------- public API ---------
     async def ainit(self):
-
         if self.faiss_index_path.exists() and self.faiss_doc_path.exists():
             self.vs = await asyncio.get_event_loop().run_in_executor(
                 self.executor, self._load_vectorstore
@@ -39,7 +38,6 @@ class BaseRAG:
 
     # --------- helpers ---------
     def _build_vectorstore(self):
-
         docs = self._load_docs()
         self.vs = FAISS.from_documents(docs, self.embed_model)
         res = faiss.StandardGpuResources()

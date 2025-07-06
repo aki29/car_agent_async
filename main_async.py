@@ -7,6 +7,8 @@ from agent.chains.chat_chain_async import get_chat_chain
 from agent.memory.manager_async import init_db, load_memory
 from langchain.globals import set_debug, set_verbose, set_llm_cache
 from langchain_core.caches import InMemoryCache
+from langchain_community.cache import SQLiteCache
+from agent.cache.async_and_fuzzy_cache import AsyncSQLiteCache
 from agent.memory.engine import checkpoint_db
 from agent.memory.manager import MemoryManager
 from agent.rag import RAGManager
@@ -15,7 +17,17 @@ import agent.rag as rag_mod
 # set_debug(True)
 # set_verbose(True)
 # set_llm_cache(None)           # stop cache
-set_llm_cache(InMemoryCache())  # new cache everytime
+# set_llm_cache(InMemoryCache())  # new cache everytime
+use_cache = os.getenv("USE_LLM_CACHE", "false").lower() == "true"
+if use_cache:
+    os.makedirs(".cache", exist_ok=True)
+    set_llm_cache(SQLiteCache(database_path=".cache/langchain.db"))
+    # print("[cache] SQLite LLM cache enabled.")
+    # set_llm_cache(AsyncSQLiteCache(db_path=".cache/langchain.db"))
+    # print("[cache] AsyncSQLite LLM cache enabled.")
+else:
+    set_llm_cache(InMemoryCache())
+    # print("[cache] In-memory (ephemeral) LLM cache enabled.")
 
 # import warnings
 # warnings.filterwarnings("ignore", category=UserWarning, module="langchain.memory")
@@ -74,7 +86,7 @@ def init_models():
         base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         keep_alive=-1,
         num_ctx=1024,
-        num_predict=12,
+        num_predict=24,
         num_thread=6,
         temperature=0.0,
         top_k=30,
@@ -100,16 +112,17 @@ def init_models():
     return llm, embed, mem
 
 
-async def warmup_rag(rag_manager):
+async def warmup_models(llm, rag_manager):
     # print("[warmup] Preloading FAISS index and embedding model...")
 
     async def _safe_warmup(rag, name: str):
         try:
             await rag.aretrieve("testing")
-            # print(f"[warmup] {name} ready.")
+            print(f"[warmup] {name} ready.")
         except Exception as e:
             print(f"[warmup] {name} failed: {e}")
 
+    await llm.ainvoke("ping")
     await asyncio.gather(
         _safe_warmup(rag_manager.poi, "poi"),
         _safe_warmup(rag_manager.parking, "parking"),
@@ -126,7 +139,10 @@ async def main():
     rag_mod.rag_manager = RAGManager(embed)
     await rag_mod.rag_manager.ainit()
     await init_db()
-    await warmup_rag(rag_mod.rag_manager)
+    await asyncio.gather(
+        warmup_models(model, rag_mod.rag_manager),
+    )
+    # await warmup_rag(rag_mod.rag_manager)
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
     await load_memory(user_id)
     mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=512)
