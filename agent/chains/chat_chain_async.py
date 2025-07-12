@@ -206,14 +206,13 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         print(colored(str(type(input)) + ": " + f"{input}", "yellow", attrs=["bold"]))
         return input
 
-    async def _run_llm(d):
-        lang_code = detect_lang(d["question"])
-        print("lang_code", lang_code)
-        lang_hint = LANG_HINT[lang_code]
-        dyn_prompt = get_chat_prompt(lang_hint)
+    _PROMPT_CACHE = {}
 
-        # return (dyn_prompt).bind(**d) | get_message
-        return (dyn_prompt).bind(**d)
+    async def _run_llm(d):
+        lang = detect_lang(d["question"])
+        # print("lang", lang)
+        prompt = _PROMPT_CACHE.setdefault(lang, get_chat_prompt(LANG_HINT[lang]))
+        return prompt.bind(**d)
 
     llm_part = RunnableLambda(_run_llm)
 

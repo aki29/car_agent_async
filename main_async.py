@@ -164,7 +164,7 @@ async def main():
             start = time.perf_counter()
             response_text = ""
             try:
-                first_word = 0
+                first_word = None
                 async for chunk in stream_chain.astream(
                     {"question": query},
                     config={
@@ -203,7 +203,7 @@ async def main():
             except Exception as e:
                 print(colored(f"[error] {e}", "red"))
             finally:
-                ttfb = first_word - start
+                ttfb = (first_word or start) - start
                 total = time.perf_counter() - start
                 print(colored(f"(TTFB {ttfb:.2f}s, Total {total:.2f}s)", "blue"))
 
