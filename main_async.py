@@ -65,17 +65,15 @@ def init_models():
         base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         keep_alive=-1,
         num_ctx=1536,
-        # num_predict=128,
+        num_predict=256,
         num_thread=6,
-        temperature=0.4,
+        temperature=0.5,
         top_k=50,
         top_p=0.9,
         repeat_penalty=1.2,
         presence_penalty=0.1,
-        # stop=["\n\n", "<END>"],
         stop=["<END>"],
         stream=True,
-        # cache=True,
     )
 
     llm = ChatOllama(**critical_cfg, cache=True)
@@ -93,12 +91,12 @@ def init_models():
         keep_alive=-1,
         num_ctx=1024,
         num_predict=24,
-        num_thread=6,
+        num_thread=4,
         temperature=0.0,
         top_k=30,
         top_p=0.15,
         repeat_penalty=1.15,
-        seed=42,
+        # seed=42,
         stop=["<END>"],
     )
 
