@@ -117,8 +117,6 @@ def init_models():
 
 
 async def warmup_models(llm, rag_manager):
-    # print("[warmup] Preloading FAISS index and embedding model...")
-
     async def _safe_warmup(rag, name: str):
         try:
             await rag.aretrieve("testing")
@@ -133,8 +131,10 @@ async def warmup_models(llm, rag_manager):
         _safe_warmup(rag_manager.manual, "manual"),
         _safe_warmup(rag_manager.food, "food"),
     )
-
     # print("[warmup] All RAGs initialized.\n")
+
+
+PUNCT_RE = re.compile(r"[，、,。.！!？?:：;；…\-—「」『』‘’“”*]")
 
 
 async def main():
@@ -142,18 +142,16 @@ async def main():
     global rag_manager
     rag_mod.rag_manager = RAGManager(embed, store_dir=Path(".cache/rag/"))
     await rag_mod.rag_manager.ainit()
-    await init_db()
+    await init_db()  # ctk_user.sqlite3
     await asyncio.gather(
         warmup_models(model, rag_mod.rag_manager),
     )
-    # await warmup_rag(rag_mod.rag_manager)
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
     await load_memory(user_id)
     mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=512)
-    # chat = get_chat_chain(user_id, model, mem_mgr, rag_mod.rag_manager)
     chains = get_chat_chain(user_id, model, mem_mgr, rag_mod.rag_manager)
     stream_chain = chains["stream"]
-    invoke_chain = chains["invoke"]
+    # invoke_chain = chains["invoke"]
     asyncio.create_task(periodic_checkpoint(60))
     print("\n[In-Car Assistant STREAMING mode. Type /exit to end.]")
     try:
@@ -166,12 +164,11 @@ async def main():
             start = time.perf_counter()
             response_text = ""
             try:
-                # async for chunk in chat.astream(
                 first_word = 0
                 async for chunk in stream_chain.astream(
                     {"question": query},
                     config={
-                        #"stream": True,
+                        # "stream": True,
                         "configurable": {"session_id": user_id},
                     },
                 ):
@@ -179,13 +176,13 @@ async def main():
                         text = chunk.content
                     else:
                         text = str(chunk)
-
-                    text = re.sub(r"[，、,。.！!？?:：;；…\-—「」『』‘’“”\*]", "", text)
-                    cleaned = emoji.replace_emoji(text, replace="")
+                    text = PUNCT_RE.sub("", text)
+                    # text = re.sub(r"[，、,。.！!？?:：;；…\-—「」『』‘’“”\*]", "", text)
+                    text = emoji.replace_emoji(text, replace="")
                     if not first_word:
                         first_word = time.perf_counter()
-                    print(colored(cleaned, "green"), end="", flush=True)
-                    response_text += cleaned
+                    print(colored(text, "green"), end="", flush=True)
+                    response_text += text
                     # response_text += chunk
                 print()  # newline after streaming
 
@@ -200,18 +197,22 @@ async def main():
                     print("bye！")
                     break
                 else:
-                    pass
+                    await mem_mgr.save_turn(query, response_text)
                     # speak_tts(ai_text)
 
             except Exception as e:
                 print(colored(f"[error] {e}", "red"))
             finally:
-                elapsed = time.perf_counter() - start
-                print(colored(f"({elapsed:.2f}s)", "blue"))
-                if first_word:
-                    elapsed = first_word - start
-                    print(colored(f"({elapsed:.2f}s)", "blue"))
-                    first_word = 0
+                ttfb = first_word - start
+                total = time.perf_counter() - start
+                print(colored(f"(TTFB {ttfb:.2f}s, Total {total:.2f}s)", "blue"))
+
+            # elapsed = time.perf_counter() - start
+            # print(colored(f"({elapsed:.2f}s)", "blue"))
+            # if first_word:
+            #     elapsed = first_word - start
+            #     print(colored(f"({elapsed:.2f}s)", "blue"))
+            #     first_word = 0
     except Exception as e:
         print(colored(f"[system error] {e}", "red"))
     finally:

@@ -20,7 +20,6 @@ lang_det = LangDetector()
 
 
 def detect_lang(text: str) -> str:
-    print("###", text)
     return lang_det.detect(text)
 
 
@@ -55,68 +54,7 @@ def get_chat_prompt(lang_hint: str = ""):
     )
 
 
-# def get_chat_prompt(lang_hint: str = ""):
-#     return ChatPromptTemplate.from_messages(
-#         [
-#             ("system", lang_hint),
-#             ("system", """You are an intelligent and friendly in-car voice assistant."""),
-#             (
-#                 "system",
-#                 """【語氣】溫暖、精簡、體貼，如同坐在駕駛旁的夥伴。
-# 【思考】隱藏推理，只輸出最終答案。
-# 【親切回應】用戶透露偏好或重要資訊時，直接親切個性化回應運用。
-# """,
-#             ),
-#             ("system", "【使用者資料使用】僅在與當前問題明確相關時才引用使用者資料 其他內容請忽略"),
-#             ("system", "【使用者資料】\n{user_profile}"),
-#             ("system", "【歷史使用】僅在與當前問題明確相關時才引用歷史 其他內容請忽略"),
-#             ("system", "【歷史】{chat_history}"),
-#             ("human", "{question}"),
-#         ]
-#     )
-
-
-# def get_chat_prompt(lang_hint: str = ""):
-#     return ChatPromptTemplate.from_messages(
-#         [
-#             ("system", lang_hint),
-#             (
-#                 "system",
-#                 """You are an intelligent and friendly in-car voice assistant.
-# 【語氣】溫暖、精簡、體貼，如同坐在駕駛旁的夥伴。
-# 【思考】隱藏推理，只輸出最終答案。
-# 【記憶】用戶透露偏好或重要資訊時，親切回應並以唯一key存檔，後續直接個性化運用。
-# 【釐清】有疑慮時，可禮貌提問確認。
-# 【回答策略】若使用者提問過於籠統或範圍過大（例如「有哪些服務」「今天有什麼新聞」「有推薦的餐廳嗎」），
-# 請先主動列出「最相關的 3～5 條具體選項」，每條 ≤40 字，
-# 列表完畢後，在同一段話最後加上一句同語言的釐清句，
-# 格式：「想了解哪一項的詳細內容？」（日文請用「どれについて詳しく知りたいですか？」；英文請用「Which one would you like to know more about？」）。""",
-#             ),
-#             (
-#                 "system",
-#                 """【禁止符號】, ， . 。 ！ ! ？ ? ： : ； ; 「 」 『 』 ‘ ’ “ ” - — … 、請完全不要輸出以上任何符號或換行。
-
-# 【示例】
-# ユーザー: おはよう
-# アシスタント: おはよう 素敵な一日を
-
-# 使用者: 早安
-# 助手輸出: 早安 祝您有個美好的一天
-
-# User: Good morning
-# Assistant: Good morning Have a wonderful day
-# """,
-#             ),
-#             ("system", "【使用者資料】\n{user_profile}"),
-#             ("system", "【歷史使用】僅在與當前問題明確相關時才引用歷史 其他內容請忽略"),
-#             ("system", "【歷史】{chat_history}"),
-#             ("human", "{question}"),
-#         ]
-#     )
-
-
 def get_chat_chain(user_id: str, model, mem_mgr, rag):
-    # prompt = get_chat_prompt()
     extract_chain = extract_memory_kv_chain(model)
 
     def make_rag_node(domain_name: str):
@@ -145,7 +83,6 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
                     ("human", "{question}"),
                 ]
             )
-
             return await (prompt_tmpl | model).ainvoke({"context": context, "question": q})
 
         return RunnableLambda(_answer)
@@ -178,27 +115,6 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
     time_node = RunnableLambda(lambda d: _fmt_time(detect_lang(d["question"])))
     date_node = RunnableLambda(lambda d: _fmt_date(detect_lang(d["question"])))
     clean_node = RunnableLambda(strip_punct)
-
-    # async def _manual(d):
-    #     docs = await rag.query_manual(d["question"])
-    #     return "\n".join(x.page_content for x in docs[:3])
-
-    # async def _parking(d):
-    #     docs = await rag.query_parking(d["question"])
-    #     return "\n".join(x.page_content for x in docs[:3])
-
-    # async def _food(d):
-    #     docs = await rag.query_food(d["question"])
-    #     return "\n".join(x.page_content for x in docs[:3])
-
-    # async def _poi(d):
-    #     docs = await rag.query_poi(d["question"])
-    #     return "\n".join(x.page_content for x in docs[:3])
-
-    # manual_node = RunnableLambda(_manual)
-    # parking_node = RunnableLambda(_parking)
-    # food_node = RunnableLambda(_food)
-    # poi_node = RunnableLambda(_poi)
 
     manual_node = make_rag_node("manual")
     parking_node = make_rag_node("parking")
@@ -266,6 +182,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
         profile_dict = await load_memory(user_id)
         profile_text = "\n".join(f"{k}: {v}" for k, v in profile_dict.items())
+
         reply = await router.ainvoke(
             {
                 "question": user_input,
@@ -273,13 +190,15 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
                 "user_profile": profile_text,
             }
         )
-        if isinstance(reply, str):
-            await mem_mgr.save_turn(user_input, reply)
-        #await mem_mgr.save_turn(user_input, reply)
-        # print(reply)
+
+        # if isinstance(reply, str):
+        # await mem_mgr.save_turn(user_input, reply)
+        # await mem_mgr.save_turn(user_input, reply)
+
         if hasattr(reply, "content"):
             return reply.content
-        return reply
+        else:
+            return reply
 
     from termcolor import colored
 
@@ -292,8 +211,9 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         print("lang_code", lang_code)
         lang_hint = LANG_HINT[lang_code]
         dyn_prompt = get_chat_prompt(lang_hint)
-        #return (dyn_prompt).bind(**d) | get_message
-        return (dyn_prompt).bind(**d) 
+
+        # return (dyn_prompt).bind(**d) | get_message
+        return (dyn_prompt).bind(**d)
 
     llm_part = RunnableLambda(_run_llm)
 
@@ -318,6 +238,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
     )
 
     STREAMABLE = {"chat", "music", "navigation", "news"}
+
     async def _dispatch(d):
         dest = d["route"]["destination"]
         pprint(d)
@@ -331,10 +252,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
     is_final_str = lambda x: isinstance(x, str)
 
-    branch_tail = RunnableBranch(
-        (is_final_str, RunnablePassthrough()),   
-        model                               
-    )
+    branch_tail = RunnableBranch((is_final_str, RunnablePassthrough()), model)
     chain = RunnableLambda(store_and_extract)
     stream_chain = chain | branch_tail
     invoke_chain = chain | StrOutputParser() | clean_node

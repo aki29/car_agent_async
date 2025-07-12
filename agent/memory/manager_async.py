@@ -37,25 +37,6 @@ async def init_db() -> None:
         await db.commit()
 
 
-# async def append_chat(user_id: str, role: str, content: str) -> None:
-#     async with aiosqlite.connect(DB_PATH) as db:
-#         await db.execute(
-#             "INSERT INTO chat_history (user_id, role, content, timestamp) VALUES (?,?,?,?)",
-#             (user_id, role, content, datetime.now().isoformat()),
-#         )
-#         await db.commit()
-
-
-# async def load_chat_history(user_id: str, limit: int = 20):
-#     print("AKI->load_chat_history")
-#     async with aiosqlite.connect(DB_PATH) as db:
-#         rows = await db.execute_fetchall(
-#             "SELECT role, content FROM chat_history WHERE user_id = ? ORDER BY id DESC LIMIT ?",
-#             (user_id, limit),
-#         )
-#     return list(reversed(rows))
-
-
 async def save_memory(user_id: str, key: str, value: str):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
