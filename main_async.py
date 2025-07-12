@@ -63,14 +63,15 @@ def init_models():
         base_url=os.getenv("OLLAMA_URL", "http://localhost:11434"),
         keep_alive=-1,
         num_ctx=1536,
-        num_predict=64,
+        # num_predict=128,
         num_thread=6,
         temperature=0.4,
         top_k=50,
         top_p=0.9,
         repeat_penalty=1.2,
         presence_penalty=0.1,
-        stop=["\n\n", "<END>"],
+        # stop=["\n\n", "<END>"],
+        stop=["<END>"],
         stream=True,
         # cache=True,
     )
@@ -170,7 +171,7 @@ async def main():
                 async for chunk in stream_chain.astream(
                     {"question": query},
                     config={
-                        "stream": True,
+                        #"stream": True,
                         "configurable": {"session_id": user_id},
                     },
                 ):
@@ -179,10 +180,10 @@ async def main():
                     else:
                         text = str(chunk)
 
-                    text = re.sub(r"[，,。.！!？?:：;；…\-—「」『』‘’“”]", "", text)
+                    text = re.sub(r"[，、,。.！!？?:：;；…\-—「」『』‘’“”\*]", "", text)
                     cleaned = emoji.replace_emoji(text, replace="")
-                    # if not first_word:
-                    #     first_word = time.perf_counter()
+                    if not first_word:
+                        first_word = time.perf_counter()
                     print(colored(cleaned, "green"), end="", flush=True)
                     response_text += cleaned
                     # response_text += chunk

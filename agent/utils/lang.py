@@ -26,8 +26,8 @@ def _init_state():
 
 _init_state()
 
-_TTL_SEC = 300
-_SHORT_LEN = 3
+_TTL_SEC = 30
+_SHORT_LEN = 2
 
 
 class LangDetector:

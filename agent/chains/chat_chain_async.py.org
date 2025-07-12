@@ -273,9 +273,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
                 "user_profile": profile_text,
             }
         )
-        if isinstance(reply, str):
-            await mem_mgr.save_turn(user_input, reply)
-        #await mem_mgr.save_turn(user_input, reply)
+        await mem_mgr.save_turn(user_input, reply)
         # print(reply)
         if hasattr(reply, "content"):
             return reply.content
@@ -292,8 +290,9 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         print("lang_code", lang_code)
         lang_hint = LANG_HINT[lang_code]
         dyn_prompt = get_chat_prompt(lang_hint)
-        #return (dyn_prompt).bind(**d) | get_message
-        return (dyn_prompt).bind(**d) 
+        chain = dyn_prompt | get_message | model
+        # chain = dyn_prompt | model
+        return await chain.ainvoke(d)
 
     llm_part = RunnableLambda(_run_llm)
 
@@ -317,25 +316,19 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         payload=RunnablePassthrough(),
     )
 
-    STREAMABLE = {"chat", "music", "navigation", "news"}
     async def _dispatch(d):
         dest = d["route"]["destination"]
         pprint(d)
         chain = CHAIN_MAP[dest]
-        if dest in STREAMABLE:
-            return await chain.ainvoke(d["payload"])
-        else:
-            return await chain.ainvoke(d["payload"])
+        return await chain.ainvoke(d["payload"])
 
     router = parallel | RunnableLambda(_dispatch)
 
-    is_final_str = lambda x: isinstance(x, str)
+    # chain = RunnableLambda(store_and_extract)
+    # return chain | StrOutputParser() | clean_node
 
-    branch_tail = RunnableBranch(
-        (is_final_str, RunnablePassthrough()),   
-        model                               
-    )
     chain = RunnableLambda(store_and_extract)
-    stream_chain = chain | branch_tail
+    stream_chain = chain | model
+    #stream_chain = chain
     invoke_chain = chain | StrOutputParser() | clean_node
     return {"stream": stream_chain, "invoke": invoke_chain}
