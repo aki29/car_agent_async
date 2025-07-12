@@ -1,4 +1,6 @@
-import asyncio, os, time, uuid, signal, pytz
+import uvloop, asyncio, os, time, uuid, signal, pytz
+
+asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
 from termcolor import colored
 from dotenv import load_dotenv, find_dotenv
 from aioconsole import ainput
