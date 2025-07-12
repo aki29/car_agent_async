@@ -57,9 +57,13 @@ class MemoryManager:
         # self._store.add_user_message(user_text)
         # self._store.add_ai_message(content)
 
-        asyncio.create_task(
-            self.summary.asave_context(
-                {"input": user_text},
-                {"output": content},
-            )
+        await self.summary.asave_context(
+            {"input": user_text},
+            {"output": content},
         )
+        # asyncio.create_task(
+        #     self.summary.asave_context(
+        #         {"input": user_text},
+        #         {"output": content},
+        #     )
+        # )

@@ -7,6 +7,7 @@ from langchain_core.runnables import (
     RunnablePassthrough,
     RunnableParallel,
 )
+from langchain_core.prompt_values import ChatPromptValue
 from agent.memory.extractor import extract_memory_kv_chain
 from agent.memory.manager_async import load_memory, save_memory, clear_memory
 from agent.memory.engine import checkpoint_db
@@ -87,6 +88,15 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
         return RunnableLambda(_answer)
 
+    async def query_all(q, user_loc):
+        tasks = [
+            rag.query_manual(q),
+            rag.query_food(q, user_loc=user_loc),
+            rag.query_poi(q, user_loc=user_loc),
+            rag.query_parking(q, user_loc=user_loc),
+        ]
+        results = await asyncio.gather(*tasks)
+
     def _fmt_time(lang: str) -> str:
         now = datetime.now(tz)
         hour = now.strftime("%-I")
@@ -121,7 +131,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
     food_node = make_rag_node("food")
     poi_node = make_rag_node("poi")
 
-    async def store_and_extract(input_dict):
+    async def store_and_extract(input_dict) -> str | ChatPromptValue:
         user_input = input_dict["question"].strip()
 
         if user_input == "/memory":
@@ -206,27 +216,24 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         print(colored(str(type(input)) + ": " + f"{input}", "yellow", attrs=["bold"]))
         return input
 
-    _PROMPT_CACHE = {}
+    _PROMPT_CACHE: dict[str, ChatPromptTemplate] = {}
 
-    async def _run_llm(d):
+    async def _run_llm(d) -> ChatPromptValue:
         lang = detect_lang(d["question"])
         # print("lang", lang)
         prompt = _PROMPT_CACHE.setdefault(lang, get_chat_prompt(LANG_HINT[lang]))
         return prompt.bind(**d)
 
     llm_part = RunnableLambda(_run_llm)
-
+    LLM_DOMAINS = ["chat", "music", "navigation", "news"]
     CHAIN_MAP = {
+        **{d: llm_part for d in LLM_DOMAINS},
         "time": time_node,
         "date": date_node,
-        "chat": llm_part,
         "manual": manual_node,
         "parking": parking_node,
         "food": food_node,
         "poi": poi_node,
-        "music": llm_part,
-        "navigation": llm_part,
-        "news": llm_part,
     }
 
     parallel = RunnableParallel(
@@ -236,13 +243,11 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         payload=RunnablePassthrough(),
     )
 
-    STREAMABLE = {"chat", "music", "navigation", "news"}
-
     async def _dispatch(d):
         dest = d["route"]["destination"]
         pprint(d)
         chain = CHAIN_MAP[dest]
-        if dest in STREAMABLE:
+        if dest in LLM_DOMAINS:
             return await chain.ainvoke(d["payload"])
         else:
             return await chain.ainvoke(d["payload"])
