@@ -245,7 +245,7 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
 
     async def _dispatch(d):
         dest = d["route"]["destination"]
-        pprint(d)
+        # pprint(d) # used for debug
         chain = CHAIN_MAP[dest]
         if dest in LLM_DOMAINS:
             return await chain.ainvoke(d["payload"])
