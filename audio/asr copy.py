@@ -1,0 +1,119 @@
+import collections
+import queue
+import threading
+import time
+
+import pyaudio
+import webrtcvad
+import sys, os
+import riva.client
+from riva.client import ASRService, RecognitionConfig, StreamingRecognitionConfig, AudioEncoding
+
+
+class VADSource:
+    def __init__(
+        self,
+        rate=16000,
+        frame_duration_ms=20,
+        padding_duration_ms=600,
+        device=None,
+        vad_mode=2,
+        start_ratio=0.70,
+        end_ratio=0.60,
+    ):
+
+        self.rate = rate
+        self.frame_duration_ms = frame_duration_ms
+        self.frame_size = int(rate * frame_duration_ms / 1000)  # samples
+        self.padding_duration_ms = padding_duration_ms
+        self.padding_frames = int(padding_duration_ms / frame_duration_ms)
+        self.device = device
+
+        self.vad = webrtcvad.Vad(vad_mode)  # mode: 0–3，數字越大越嚴格
+        self._buff = queue.Queue()
+        self.start_ratio = start_ratio
+        self.end_ratio = end_ratio
+
+        self._audio_interface = pyaudio.PyAudio()
+        self._stream = self._audio_interface.open(
+            format=pyaudio.paInt16,
+            channels=1,
+            rate=rate,
+            input=True,
+            frames_per_buffer=self.frame_size,
+            input_device_index=device,
+        )
+        t = threading.Thread(target=self._fill_buffer, daemon=True)
+        t.start()
+
+    def _fill_buffer(self):
+        while True:
+            data = self._stream.read(self.frame_size, exception_on_overflow=False)
+            self._buff.put(data)
+
+    def __iter__(self):
+        ring = collections.deque(maxlen=self.padding_frames)
+        triggered = False
+
+        while True:
+            frame = self._buff.get()
+
+            is_speech = self.vad.is_speech(frame, self.rate)
+
+            if not triggered:
+                ring.append(frame)
+                num_voiced = len([f for f in ring if self.vad.is_speech(f, self.rate)])
+                if num_voiced > 0.5 * ring.maxlen:
+                    triggered = True
+                    for f in ring:
+                        yield f
+                    ring.clear()
+            else:
+                yield frame
+                ring.append(frame)
+                num_unvoiced = len([f for f in ring if not self.vad.is_speech(f, self.rate)])
+                if num_unvoiced > 0.5 * ring.maxlen:
+                    break
+
+        while not ring.empty():
+            ring.popleft()
+        return
+
+
+def main():
+    auth = riva.client.Auth(ssl_cert=None, use_ssl=False, uri="localhost:50051")
+    asr = ASRService(auth)
+
+    recog_cfg = RecognitionConfig(
+        encoding=AudioEncoding.LINEAR_PCM,
+        # language_code="zh-CN",
+        language_code="ja-JP",
+        sample_rate_hertz=16000,
+        audio_channel_count=1,
+        max_alternatives=1,
+        enable_automatic_punctuation=True,
+    )
+    stream_cfg = StreamingRecognitionConfig(config=recog_cfg, interim_results=True)
+
+    print(">>> 開始偵測語音，請說話…")
+    while True:
+
+        vad_source = VADSource(
+            rate=16000, frame_duration_ms=30, padding_duration_ms=300, device=None
+        )
+
+        responses = asr.streaming_response_generator(
+            audio_chunks=vad_source,
+            streaming_config=stream_cfg,
+        )
+
+        for resp in responses:
+            for result in resp.results:
+                if result.is_final:
+                    print("[最終辨識] " + result.alternatives[0].transcript)
+
+        print(">>> 偵測到語音暫停，請繼續說話或 Ctrl+C 離開…\n")
+
+
+if __name__ == "__main__":
+    main()

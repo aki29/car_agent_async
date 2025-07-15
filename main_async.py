@@ -1,6 +1,26 @@
-import uvloop, asyncio, os, time, uuid, signal, pytz
+import ctypes, ctypes.util, atexit
+from ctypes import c_char_p, c_int, CFUNCTYPE
 
-asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
+libasound = ctypes.cdll.LoadLibrary(ctypes.util.find_library("asound"))
+
+ERROR_HANDLER_FUNC = CFUNCTYPE(None, c_char_p, c_int, c_char_p, c_int, c_char_p)
+
+
+def _alsa_error_silent(*args):
+    pass
+
+
+c_error_handler = ERROR_HANDLER_FUNC(_alsa_error_silent)
+
+libasound.snd_lib_error_set_handler(c_error_handler)
+
+
+@atexit.register
+def _reset_alsa_handler():
+    libasound.snd_lib_error_set_handler(None)
+
+
+import uvloop, asyncio, os, time, uuid, signal, pytz
 from termcolor import colored
 from dotenv import load_dotenv, find_dotenv
 from aioconsole import ainput
@@ -15,9 +35,17 @@ from agent.memory.engine import checkpoint_db
 from agent.memory.manager import MemoryManager
 from agent.rag import RAGManager
 import agent.rag as rag_mod
-import re
-import emoji
+import emoji, re, sys, math
 from pathlib import Path
+import riva.client
+from riva.client import ASRService, RecognitionConfig, StreamingRecognitionConfig, AudioEncoding
+from riva.client import SpeechSynthesisService
+from riva.client.proto.riva_audio_pb2 import AudioEncoding as TTSAudioEncoding
+import riva.client.audio_io as audio_io
+
+from agent.rag import RAGManager
+from audio.asr import VADSource
+
 
 # set_debug(True)
 # set_verbose(True)
@@ -42,12 +70,14 @@ else:
 # os.environ["TRANSFORMERS_NO_PYTORCH"] = "1"
 
 load_dotenv(find_dotenv())
+tts_queue = asyncio.Queue()
 
 
 def signal_handler(sig, frame):
     print("\nInterrupted!!")
     checkpoint_db()
-    raise SystemExit
+    os.kill(os.getpid(), signal.SIGKILL)
+    sys.exit(1)
 
 
 signal.signal(signal.SIGINT, signal_handler)
@@ -57,6 +87,19 @@ async def periodic_checkpoint(interval_sec=600):
     while True:
         await asyncio.sleep(interval_sec)
         checkpoint_db()
+
+
+class SuppressStdout:
+    def __enter__(self):
+        self._original_stdout = sys.stdout
+        self._original_stderr = sys.stderr
+        sys.stdout = open(os.devnull, "w")
+        sys.stderr = open(os.devnull, "w")
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        sys.stdout.close()
+        sys.stdout = self._original_stdout
+        sys.stderr = self._original_stderr
 
 
 def init_models():
@@ -104,15 +147,11 @@ def init_models():
 
     # ChatOllama.get_token_ids = lambda self, text: text.split()
 
-    import math
-
     def _cheap_tokenizer(self, text: str):
-
         n = max(1, math.ceil(len(text.encode('utf-8')) / 4))
         return [None] * n
 
     ChatOllama.get_token_ids = _cheap_tokenizer
-
     return llm, embed, mem
 
 
@@ -134,10 +173,9 @@ async def warmup_models(llm, rag_manager):
     # print("[warmup] All RAGs initialized.\n")
 
 
-PUNCT_RE = re.compile(r"[，、,。.！!？?:：;；…\-—「」『』‘’“”*]")
-
-
 async def main():
+    # PUNCT_RE = re.compile(r"[，、,。.！!？?:：;；…\-—「」『』‘’“”*]")
+    PUNCT_RE = re.compile(r"[，、,。.！!？?：;；…\-—「」『』‘’“”*]")
     model, embed, mem = init_models()
     global rag_manager
     rag_mod.rag_manager = RAGManager(embed, store_dir=Path(".cache/rag/"))
@@ -146,6 +184,41 @@ async def main():
     await asyncio.gather(
         warmup_models(model, rag_mod.rag_manager),
     )
+    # ------ 初始化 Riva ASR ------
+    auth = riva.client.Auth(
+        ssl_cert=None, use_ssl=False, uri=os.getenv("RIVA_URI", "localhost:50051")
+    )
+    asr = ASRService(auth)
+
+    recog_cfg = RecognitionConfig(
+        encoding=AudioEncoding.LINEAR_PCM,
+        language_code="zh-CN",
+        # language_code="ja-JP",
+        # language_code="en-US",
+        sample_rate_hertz=16000,
+        audio_channel_count=1,
+        max_alternatives=1,
+        enable_automatic_punctuation=True,
+        # enable_voice_activity_events=True,
+        # enable_noise_reduction=True,
+    )
+    stream_cfg = StreamingRecognitionConfig(
+        config=recog_cfg,
+        interim_results=True,
+    )
+    # ----------------------------------------
+    auth_tts = riva.client.Auth(
+        ssl_cert=None, use_ssl=False, uri=os.getenv("RIVA_URI", "localhost:50051")
+    )
+    tts = SpeechSynthesisService(auth_tts)
+    RIVA_VOICE = "Mandarin-CN.Male-Happy"
+    TTS_SR = 22050
+
+    sound_stream = audio_io.SoundCallBack(
+        output_device_index=None, sampwidth=2, nchannels=1, framerate=TTS_SR
+    )
+    # -----------------------------
+
     user_id = (await ainput("Please enter your user ID: ")).strip() or str(uuid.uuid4())
     await load_memory(user_id)
     mem_mgr = MemoryManager(mem, session_id=user_id, max_messages=12, token_limit=512)
@@ -153,18 +226,77 @@ async def main():
     stream_chain = chains["stream"]
     # invoke_chain = chains["invoke"]
     asyncio.create_task(periodic_checkpoint(60))
+
+    async def listen_asr(asr_service: ASRService, stream_cfg: StreamingRecognitionConfig) -> str:
+        def sync_recognize():
+            # with mute_alsa():
+            vad = VADSource(rate=16000, frame_duration_ms=30, padding_duration_ms=300)
+            responses = asr_service.streaming_response_generator(
+                audio_chunks=vad,
+                streaming_config=stream_cfg,
+            )
+            final_text = ""
+            for resp in responses:
+                for res in resp.results:
+                    transcript = res.alternatives[0].transcript.strip()
+                    if not res.is_final:
+                        print(f"\r[Interim] {transcript}", end="", flush=True)
+                    else:
+                        if len(transcript) < 2:
+                            continue
+                        print(f"\r[Final]   {transcript}{' ' * 10}")
+                        return transcript.strip()
+            return ""
+
+        try:
+            return await asyncio.to_thread(sync_recognize)
+        except KeyboardInterrupt:
+            print("\n[ASR aborted]")
+            return ""
+
+    async def speak_tts(text: str):
+        def _synth_and_play():
+            for resp in tts.synthesize_online(
+                text=text,
+                voice_name=RIVA_VOICE,
+                language_code="zh-CN",
+                sample_rate_hz=TTS_SR,
+                encoding=TTSAudioEncoding.LINEAR_PCM,
+            ):
+                sound_stream(resp.audio)
+
+        await asyncio.to_thread(_synth_and_play)
+
+    tts_queue = asyncio.Queue()
+
+    async def tts_worker():
+        while True:
+            sentence = await tts_queue.get()
+            print("##", sentence)
+            if sentence is None:
+                break
+            await speak_tts(sentence)
+
+    tts_worker_task = asyncio.create_task(tts_worker())
     print("\n[In-Car Assistant STREAMING mode. Type /exit to end.]")
     try:
         while True:
             query = (await ainput("\nQuery: ")).strip()
             if not query:
                 continue
-            # user_text = await listen_asr()
+
+            # print("Voice input started. Please speak…")
+            # query = await listen_asr(asr, stream_cfg)
+
+            if not query:
+                print("[!️] No text or voice was received. Please try again.")
+                continue
 
             start = time.perf_counter()
             response_text = ""
             try:
                 first_word = None
+                buf = ''
                 async for chunk in stream_chain.astream(
                     {"question": query},
                     config={
@@ -176,13 +308,19 @@ async def main():
                         text = chunk.content
                     else:
                         text = str(chunk)
-                    text = PUNCT_RE.sub("", text)
+                    # text = PUNCT_RE.sub("", text)
                     # text = re.sub(r"[，、,。.！!？?:：;；…\-—「」『』‘’“”\*]", "", text)
                     text = emoji.replace_emoji(text, replace="")
                     if not first_word:
                         first_word = time.perf_counter()
                     print(colored(text, "green"), end="", flush=True)
                     response_text += text
+                    buf += text
+                    # if any(p in buf[-1:] for p in "。.!！?？") or len(buf) >= 20:
+                    if any(p in buf[-1:] for p in "，,。.!！?？"):
+                        print("@@", buf, len(buf))
+                        await tts_queue.put(buf)
+                        buf = ""
                     # response_text += chunk
                 print()  # newline after streaming
 
@@ -192,12 +330,14 @@ async def main():
                 # )
                 # response_text = full_reply
                 # print(colored(response_text, "green"), end="", flush=True)
-
+                if buf.strip():
+                    await tts_queue.put(buf)
                 if response_text.strip() == "":
                     print("bye！")
                     break
                 else:
                     await mem_mgr.save_turn(query, response_text)
+                    # asyncio.create_task(speak_tts(response_text))
                     # speak_tts(ai_text)
 
             except Exception as e:
@@ -217,7 +357,15 @@ async def main():
         print(colored(f"[system error] {e}", "red"))
     finally:
         checkpoint_db()
+        await tts_queue.put(None)
+        await tts_worker_task
+        sound_stream.close()
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\nExiting program by user request.")
+        checkpoint_db()
+        sys.exit(0)
