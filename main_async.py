@@ -1,5 +1,5 @@
 import atexit, asyncio, ctypes, ctypes.util
-import os, re, signal, sys, time, uuid, emoji
+import os, re, signal, sys, time, uuid, emoji, math
 from pathlib import Path
 from termcolor import colored
 
@@ -44,6 +44,10 @@ from agent.memory.manager import MemoryManager
 from agent.memory.manager_async import init_db, load_memory
 from agent.rag import RAGManager, rag_manager as global_rag_manager
 from audio.asr import VADSource
+import opencc
+
+cc = opencc.OpenCC('s2tw.json')  # s2t=通用繁體, s2tw=台灣正體, s2hk=香港繁體…
+# print(cc.convert("汉字转换工具how are you"))
 
 load_dotenv(find_dotenv())
 
@@ -63,9 +67,11 @@ PUNCT_RE = re.compile(r"[，、,。.！!？?：;；…\-—「」『』‘’“
 RIVA_URI = os.getenv("RIVA_URI", "localhost:50051")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL_NAME", "gemma3:4b")
+EMBED_MODEL = os.getenv("EMBEDDINGS_MODEL_NAME", "nomic-embed-text:latest")
+MEM_MODEL = os.getenv("MEM_MODEL_NAME", "phi3:latest")
 VOICE_NAME = os.getenv("RIVA_VOICE", "Mandarin-CN.Male-Happy")
 TTS_SR = 22050
-VOICE_MODE = os.getenv("VOICE_MODE", "true").lower() == "true"
+VOICE_MODE = os.getenv("VOICE_MODE", "false").lower() == "true"
 USE_CACHE = os.getenv("USE_LLM_CACHE", "false").lower() == "true"
 if USE_CACHE:
     os.makedirs(".cache", exist_ok=True)
@@ -77,6 +83,15 @@ else:
 
     set_llm_cache(InMemoryCache())
 
+from audio.webrtc_frontend import WebRTCAudioFrontend
+
+# apm = WebRTCAudioFrontend(rate=16000, channels=1)
+apm = WebRTCAudioFrontend(rate=16000, channels=1, aec=0, ns=True, agc=0, vad=False)
+apm.apm.set_ns_level(1)  # 噪音抑制 0‑3，建議 2
+# apm.apm.set_agc_level(2)  # AGC 目標 dBFS，數值大 → 輸出較小聲
+# apm.apm.set_agc_target(5)
+# apm.apm.set_aec_level(0)  # AEC 0=Low, 1=Moderate, 2=High
+# apm.apm.set_vad_level(0)  # VAD 0=敏感，3=嚴格
 
 auth = riva.client.Auth(ssl_cert=None, use_ssl=False, uri=RIVA_URI)
 asr_service = ASRService(auth)
@@ -100,6 +115,7 @@ async def speak_tts(text: str) -> None:
             encoding=TTSAudioEncoding.LINEAR_PCM,
         ):
             if resp.audio:
+                apm.feed_far_end(resp.audio, src_rate=TTS_SR)  # WEBRTC
                 sound_stream(resp.audio)
 
     await asyncio.get_running_loop().run_in_executor(None, _synth_and_play)
@@ -122,15 +138,34 @@ def init_models():
         keep_alive=-1,
         num_ctx=1536,
         num_predict=256,
+        num_thread=6,
+        temperature=0.5,
+        top_k=50,
+        top_p=0.9,
+        repeat_penalty=1.2,
+        presence_penalty=0.1,
+        stop=["<END>"],
         stream=True,
     )
     llm = ChatOllama(**llm_cfg, cache=True)
-    embed = OllamaEmbeddings(model="nomic-embed-text:latest", base_url=OLLAMA_URL)
-    mem_llm = ChatOllama(model="phi3:latest", base_url=OLLAMA_URL, cache=True)
+    embed = OllamaEmbeddings(model=EMBED_MODEL, base_url=OLLAMA_URL, keep_alive=-1, num_thread=4)
+    mem_cfg = dict(
+        model=MEM_MODEL,
+        base_url=OLLAMA_URL,
+        keep_alive=-1,
+        num_ctx=1024,
+        num_predict=24,
+        num_thread=4,
+        temperature=0.0,
+        top_k=30,
+        top_p=0.15,
+        repeat_penalty=1.15,
+        # seed=42,
+        stop=["<END>"],
+    )
+    mem_llm = ChatOllama(**mem_cfg, cache=True)
 
     def _cheap(self, text: str):
-        import math
-
         return [None] * max(1, math.ceil(len(text.encode("utf-8")) / 4))
 
     ChatOllama.get_token_ids = _cheap
@@ -140,16 +175,26 @@ def init_models():
 REC_CFG = RecognitionConfig(
     encoding=AudioEncoding.LINEAR_PCM,
     language_code="zh-CN",
+    # language_code="ja-JP",
     sample_rate_hertz=16000,
     audio_channel_count=1,
     max_alternatives=1,
     enable_automatic_punctuation=True,
 )
 STR_CFG = StreamingRecognitionConfig(config=REC_CFG, interim_results=True)
+# single_utterance=True
 
 
 async def listen_once() -> str:
-    vad = VADSource(rate=16000, frame_duration_ms=30, padding_duration_ms=300)
+    vad = VADSource(
+        rate=16000,
+        frame_duration_ms=30,
+        padding_duration_ms=300,
+        vad_mode=1,
+        start_ratio=0.6,
+        end_ratio=0.4,
+        apm=None,
+    )
 
     def _sync() -> str:
         for resp in asr_service.streaming_response_generator(vad, STR_CFG):
@@ -185,7 +230,9 @@ async def main() -> None:
             if VOICE_MODE:
                 print(colored("\nVoice input started…", "cyan"))
                 query = await listen_once()
+                query = query.strip().rstrip("。.")
                 if query:
+                    query = cc.convert(query)
                     print(colored(f"\n{query}", "white"))
             else:
                 query = (await ainput(colored("\nQuery: ", "cyan"))).strip()
@@ -193,8 +240,7 @@ async def main() -> None:
             if not query:
                 continue
 
-            exit_query = query.strip().rstrip("。.")
-            if exit_query.lower() in {"/exit", "退出", "離開", "离开"}:
+            if query.lower() in {"/exit", "退出", "離開", "离开"}:
                 break
 
             first_token = time.perf_counter()
