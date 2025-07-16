@@ -272,7 +272,7 @@ async def main():
     async def tts_worker():
         while True:
             sentence = await tts_queue.get()
-            print("##", sentence)
+            # print("##", sentence)
             if sentence is None:
                 break
             await speak_tts(sentence)
@@ -318,7 +318,7 @@ async def main():
                     buf += text
                     # if any(p in buf[-1:] for p in "。.!！?？") or len(buf) >= 20:
                     if any(p in buf[-1:] for p in "，,。.!！?？"):
-                        print("@@", buf, len(buf))
+                        # print("@@", buf, len(buf))
                         await tts_queue.put(buf)
                         buf = ""
                     # response_text += chunk

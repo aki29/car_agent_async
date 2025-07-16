@@ -72,6 +72,8 @@ class VADSource:
         silence_frame = bytes(self.frame_size * 2)  # int16 × frame_size，全 0
         while True:
             frame = self._buff.get()
+            # raw = self._buff.get()
+            # frame = self.aec.process(raw)     
             is_speech = self.vad.is_speech(frame, self.rate)
             if not triggered:
                 ring.append(is_speech)

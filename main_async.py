@@ -60,14 +60,12 @@ def _sigint_handler(sig, frame):
 signal.signal(signal.SIGINT, _sigint_handler)
 
 PUNCT_RE = re.compile(r"[，、,。.！!？?：;；…\-—「」『』‘’“”*]")
-
 RIVA_URI = os.getenv("RIVA_URI", "localhost:50051")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL_NAME", "gemma3:4b")
 VOICE_NAME = os.getenv("RIVA_VOICE", "Mandarin-CN.Male-Happy")
 TTS_SR = 22050
-VOICE_MODE = os.getenv("VOICE_MODE", "true").lower() == "true"  # ← 切換輸入來源
-
+VOICE_MODE = os.getenv("VOICE_MODE", "true").lower() == "true"
 USE_CACHE = os.getenv("USE_LLM_CACHE", "false").lower() == "true"
 if USE_CACHE:
     os.makedirs(".cache", exist_ok=True)
@@ -87,6 +85,7 @@ tts_service = SpeechSynthesisService(auth)
 sound_stream = audio_io.SoundCallBack(
     output_device_index=None, sampwidth=2, nchannels=1, framerate=TTS_SR
 )
+
 
 TTS_QUEUE: asyncio.Queue[str | None] = asyncio.Queue()
 
@@ -142,6 +141,8 @@ REC_CFG = RecognitionConfig(
     encoding=AudioEncoding.LINEAR_PCM,
     language_code="zh-CN",
     sample_rate_hertz=16000,
+    audio_channel_count=1,
+    max_alternatives=1,
     enable_automatic_punctuation=True,
 )
 STR_CFG = StreamingRecognitionConfig(config=REC_CFG, interim_results=True)
@@ -153,7 +154,7 @@ async def listen_once() -> str:
     def _sync() -> str:
         for resp in asr_service.streaming_response_generator(vad, STR_CFG):
             for res in resp.results:
-                if res.is_final:
+                if res.is_final and res.alternatives:
                     return res.alternatives[0].transcript.strip()
         return ""
 
@@ -184,14 +185,17 @@ async def main() -> None:
             if VOICE_MODE:
                 print(colored("\nVoice input started…", "cyan"))
                 query = await listen_once()
+                if query:
+                    print(colored(f"\n{query}", "white"))
             else:
                 query = (await ainput(colored("\nQuery: ", "cyan"))).strip()
 
-            if query.lower() in {"/exit", "退出", "離開"}:
-                break
-
             if not query:
                 continue
+
+            exit_query = query.strip().rstrip("。.")
+            if exit_query.lower() in {"/exit", "退出", "離開", "离开"}:
+                break
 
             first_token = time.perf_counter()
             buf, full_reply = "", ""
@@ -217,7 +221,6 @@ async def main() -> None:
     except (EOFError, KeyboardInterrupt):
         print("\n[Quit]")
     finally:
-        print('aaaa')
         await TTS_QUEUE.put(None)
         await tts_task
         sound_stream.close()
