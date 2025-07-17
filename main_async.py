@@ -43,7 +43,7 @@ from agent.memory.engine import checkpoint_db
 from agent.memory.manager import MemoryManager
 from agent.memory.manager_async import init_db, load_memory
 from agent.rag import RAGManager, rag_manager as global_rag_manager
-from audio.asr import VADSource
+from audio.vad import VADSource
 import opencc
 
 cc = opencc.OpenCC('s2tw.json')  # s2t=通用繁體, s2tw=台灣正體, s2hk=香港繁體…
@@ -72,6 +72,7 @@ MEM_MODEL = os.getenv("MEM_MODEL_NAME", "phi3:latest")
 VOICE_NAME = os.getenv("RIVA_VOICE", "Mandarin-CN.Male-Happy")
 TTS_SR = 22050
 VOICE_MODE = os.getenv("VOICE_MODE", "false").lower() == "true"
+TTS_MODE = os.getenv("TTS_MODE", "true").lower() == "true"
 USE_CACHE = os.getenv("USE_LLM_CACHE", "false").lower() == "true"
 if USE_CACHE:
     os.makedirs(".cache", exist_ok=True)
@@ -127,7 +128,8 @@ async def tts_worker() -> None:
         if sentence is None:
             TTS_QUEUE.task_done()
             break
-        await speak_tts(sentence)
+        if TTS_MODE:
+            await speak_tts(sentence)
         TTS_QUEUE.task_done()
 
 

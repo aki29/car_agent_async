@@ -7,22 +7,10 @@ import pyaudio
 import webrtcvad
 import sys, os
 import riva.client
-from riva.client import ASRService, RecognitionConfig, StreamingRecognitionConfig, AudioEncoding
 import numpy as np
 import audioop
 
 
-class SuppressStdout:
-    def __enter__(self):
-        self._original_stdout = sys.stdout
-        self._original_stderr = sys.stderr
-        sys.stdout = open(os.devnull, "w")
-        sys.stderr = open(os.devnull, "w")
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        sys.stdout.close()
-        sys.stdout = self._original_stdout
-        sys.stderr = self._original_stderr
 
 
 class VADSource:
@@ -75,7 +63,6 @@ class VADSource:
             self._buff.put((clean, self.vad.is_speech(clean, self.rate)))
 
     def __iter__(self):
-
         ring = collections.deque(maxlen=self.padding_frames)
         triggered = False
         silence_frame = bytes(self.frame_size * 2)  # int16 × frame_size，全 0
@@ -96,40 +83,3 @@ class VADSource:
         return
 
 
-def main():
-    auth = riva.client.Auth(ssl_cert=None, use_ssl=False, uri="localhost:50051")
-    asr = ASRService(auth)
-
-    recog_cfg = RecognitionConfig(
-        encoding=AudioEncoding.LINEAR_PCM,
-        # language_code="zh-CN",
-        language_code="ja-JP",
-        sample_rate_hertz=16000,
-        audio_channel_count=1,
-        max_alternatives=1,
-        enable_automatic_punctuation=True,
-    )
-    stream_cfg = StreamingRecognitionConfig(config=recog_cfg, interim_results=True)
-
-    print(">>> 開始偵測語音，請說話…")
-    while True:
-
-        vad_source = VADSource(
-            rate=16000, frame_duration_ms=30, padding_duration_ms=300, device=None
-        )
-
-        responses = asr.streaming_response_generator(
-            audio_chunks=vad_source,
-            streaming_config=stream_cfg,
-        )
-
-        for resp in responses:
-            for result in resp.results:
-                if result.is_final:
-                    print("[最終辨識] " + result.alternatives[0].transcript)
-
-        print(">>> 偵測到語音暫停，請繼續說話或 Ctrl+C 離開…\n")
-
-
-if __name__ == "__main__":
-    main()
