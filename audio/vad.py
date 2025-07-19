@@ -11,8 +11,6 @@ import numpy as np
 import audioop
 
 
-
-
 class VADSource:
     def __init__(
         self,
@@ -81,5 +79,3 @@ class VADSource:
                 if ring.count(False) > self.end_ratio * ring.maxlen:
                     break
         return
-
-
