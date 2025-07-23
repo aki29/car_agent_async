@@ -39,7 +39,8 @@ from agent.rag import RAGManager, rag_manager as global_rag_manager
 from audio.vad import VADSource
 from speech.service import SpeechService
 from audio.io import mic_stream, play_wav, _PLAY_Q, _PLAYER_TASK
-from speech.service import listen_once
+
+# from speech.service import listen_once
 import opencc
 
 cc = opencc.OpenCC('s2tw.json')  # s2t=通用繁體, s2tw=台灣正體, s2hk=香港繁體…
@@ -146,7 +147,16 @@ async def main() -> None:
     stream_chain = chains["stream"]
 
     speech = SpeechService(host=RIVA_URI)
+    from audio.io import stop_playing
+
+    async def detect_barge_in(speech: SpeechService):
+        async for chunk in speech.transcribe(mic_stream()):
+            if len(chunk.strip()) > 2:
+                stop_playing()
+                return chunk
+
     print("\n[Car‑Agent READY]")
+
     SENT_END = "，,。.!！?？"
     MAX_BUF = 40
     try:
@@ -154,17 +164,11 @@ async def main() -> None:
             # await TTS_QUEUE.join()
             if VOICE_MODE:
                 print(colored("\nVoice input started…", "cyan"))
-                # async for utter in speech.transcribe(mic_stream()):
-                #     query = cc.convert(utter.strip(" 。."))
-                #     break
-
-                pcm = await listen_once(sr=16000)
-                if not pcm:
-                    continue
-                query = await speech.transcribe_bytes(pcm, lang="zh-CN", sr=16000)
+                query = await speech.listen_and_transcribe(lang="zh-CN", sr=16000, device=None)
+                # print("ASR:", query)
                 query = cc.convert(query)
-
                 print(colored(f"\n{query}", "white"))
+                continue
             else:
                 query = (await ainput(colored("\nQuery: ", "cyan"))).strip()
 

@@ -1,10 +1,7 @@
 from __future__ import annotations
-import asyncio, hashlib, pathlib, aiofiles, wave
+import asyncio, hashlib, pathlib, aiofiles, wave, grpc
 from cachetools import LRUCache
 from diskcache import Cache
-
-# import riva.client
-import grpc
 from riva.client.proto import (
     riva_audio_pb2,
     riva_asr_pb2_grpc,
@@ -13,22 +10,7 @@ from riva.client.proto import (
     riva_tts_pb2,
 )
 from audio.vad import VADSource
-
-
-async def listen_once(sr: int = 16000) -> bytes:
-    vad = VADSource(
-        rate=sr,
-        frame_duration_ms=30,  # 30 ms 讓判斷更穩定
-        padding_duration_ms=300,
-        vad_mode=2,  # 0~3 越大越嚴格
-        start_ratio=0.7,
-        end_ratio=0.5,
-        apm=None,
-    )
-    # VADSource 是同步 iterator，要放進 executor
-    loop = asyncio.get_running_loop()
-    frames = await loop.run_in_executor(None, lambda: b"".join(vad))
-    return frames
+from termcolor import colored
 
 
 _AUD_DIR = pathlib.Path(".cache/audio_cache")
@@ -46,6 +28,7 @@ class SpeechService:
         self._chan: grpc.aio.Channel = grpc.aio.insecure_channel(host)
         self._asr = riva_asr_pb2_grpc.RivaSpeechRecognitionStub(self._chan)
         self._tts = riva_tts_pb2_grpc.RivaSpeechSynthesisStub(self._chan)
+        self._vad = None
 
     # ---------- TTS ----------
     async def synth(self, text: str, *, voice: str, sr: int = 48000) -> pathlib.Path:
@@ -63,7 +46,6 @@ class SpeechService:
             text=text,
             language_code="zh-CN",
             voice_name=voice,
-            # audio_sample_rate_hz=sr,
             sample_rate_hz=sr,
             encoding=riva_audio_pb2.AudioEncoding.LINEAR_PCM,
             # streaming=True,
@@ -87,50 +69,62 @@ class SpeechService:
         _DISK.set(k, out_path, expire=30 * 24 * 3600)
         return out_path
 
-    # async def transcribe(
-    #     self,
-    #     audio_iter,
-    #     *,
-    #     lang: str = "zh-CN",
-    #     sr: int = 16000,
-    # ) -> asyncio.AsyncIterator[str]:
-    #     rec_cfg = riva_asr_pb2.RecognitionConfig(
-    #         language_code=lang,
-    #         sample_rate_hertz=sr,
-    #         encoding=riva_audio_pb2.AudioEncoding.LINEAR_PCM,
-    #         max_alternatives=1,
-    #         audio_channel_count=1,
-    #         enable_automatic_punctuation=True,
-    #     )
+    async def _stream_recognize_once(
+        self, *, lang: str, sr: int, device: int | None, vad_mode: int, padding_ms: int
+    ) -> str:
 
-    #     stream_cfg = riva_asr_pb2.StreamingRecognitionConfig(
-    #         config=rec_cfg,
-    #         interim_results=True,  # 要即時 partial 就改 True
-    #     )
+        if self._vad is None:
+            self._vad = VADSource(
+                rate=sr,
+                frame_duration_ms=20,
+                padding_duration_ms=padding_ms,
+                device=device,
+                vad_mode=vad_mode,
+                start_ratio=0.5,
+                end_ratio=0.8,
+            )
+        self._vad.reset()
 
-    #     async def _req_gen():
-    #         # 第一包必須是 streaming_config
-    #         yield riva_asr_pb2.StreamingRecognizeRequest(streaming_config=stream_cfg)
-    #         async for chunk in audio_iter:
-    #             yield riva_asr_pb2.StreamingRecognizeRequest(audio_content=chunk)
-
-    #     async for resp in self._asr.StreamingRecognize(_req_gen()):
-    #         if resp.results and resp.results[0].is_final:
-    #             yield resp.results[0].alternatives[0].transcript
-
-    async def transcribe_bytes(self, pcm: bytes, *, lang="zh-CN", sr=16000) -> str:
-        # 將整段 PCM 封裝成 riva_asr_pb2.RecognizeRequest (非串流)
-        req = riva_asr_pb2.RecognizeRequest(
+        stream_cfg = riva_asr_pb2.StreamingRecognitionConfig(
             config=riva_asr_pb2.RecognitionConfig(
                 language_code=lang,
                 sample_rate_hertz=sr,
                 encoding=riva_audio_pb2.AudioEncoding.LINEAR_PCM,
                 audio_channel_count=1,
-                enable_automatic_punctuation=True,
+                enable_automatic_punctuation=False,
+                max_alternatives=1,
             ),
-            audio_content=pcm,
+            interim_results=True,
+            # single_utterance=False,
         )
-        resp = await self._asr.Recognize(req)
-        if resp.results and resp.results[0].alternatives:
-            return resp.results[0].alternatives[0].transcript.strip()
-        return ""
+
+        async def req_gen():
+            yield riva_asr_pb2.StreamingRecognizeRequest(streaming_config=stream_cfg)
+            for frame in self._vad:
+                yield riva_asr_pb2.StreamingRecognizeRequest(audio_content=frame)
+            yield riva_asr_pb2.StreamingRecognizeRequest(audio_content=b"")
+
+        final_text: list[str] = []
+        async for rsp in self._asr.StreamingRecognize(req_gen()):
+            for res in rsp.results:
+                if res.is_final and res.alternatives:
+                    final_text.append(res.alternatives[0].transcript)
+
+        return " ".join(final_text).strip()
+
+    async def listen_and_transcribe(
+        self,
+        *,
+        lang: str = "zh-CN",
+        sr: int = 16000,
+        device: int | None = None,
+        vad_mode: int = 2,
+        padding_ms: int = 500,
+    ) -> str:
+        while True:
+            txt = await self._stream_recognize_once(
+                lang=lang, sr=sr, device=device, vad_mode=vad_mode, padding_ms=padding_ms
+            )
+            print("R", txt)
+            if txt:
+                return txt

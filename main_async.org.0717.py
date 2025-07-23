@@ -192,9 +192,9 @@ async def listen_once() -> str:
         rate=16000,
         frame_duration_ms=30,
         padding_duration_ms=300,
-        vad_mode=1,
-        start_ratio=0.6,
-        end_ratio=0.4,
+        vad_mode=3,
+        start_ratio=0.5,
+        end_ratio=0.2,
         apm=None,
     )
 
