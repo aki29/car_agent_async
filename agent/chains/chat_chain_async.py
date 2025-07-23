@@ -104,12 +104,12 @@ def get_chat_chain(user_id: str, model, mem_mgr, rag):
         ampm = now.strftime("%p")
         if lang == "zh-tw":
             ampm = "上午" if ampm == "AM" else "下午"
-            return f"現在是{ampm} {hour}:{minute}"
+            return f"現在是{ampm} {hour}:{minute}。"
         if lang == "ja":
             ampm = "午前" if ampm == "AM" else "午後"
-            return f"現在は{ampm}{hour}:{minute}です"
+            return f"現在は{ampm}{hour}:{minute}です。"
         # default English
-        return f"It is {hour}:{minute} {ampm}"
+        return f"It is {hour}:{minute} {ampm}."
 
     def _fmt_date(lang: str) -> str:
         now = datetime.now(tz)

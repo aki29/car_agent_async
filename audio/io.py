@@ -30,30 +30,60 @@ _PLAYER_TASK: asyncio.Task | None = None
 
 def _ensure_player(loop: asyncio.AbstractEventLoop):
     global _PLAY_Q, _PLAYER_TASK
-    if _PLAY_Q is None:
+    # if _PLAY_Q is None:
+    #     _PLAY_Q = asyncio.Queue()
+    #     _PLAYER_TASK = loop.create_task(_player_worker())
+
+    if _PLAY_Q is None or _PLAYER_TASK is None or _PLAYER_TASK.done():
         _PLAY_Q = asyncio.Queue()
         _PLAYER_TASK = loop.create_task(_player_worker())
 
 
+# def stop_playing():
+#     setattr(_player_worker, "interrupted", True)
+#     sd.stop()
+#     setattr(_player_worker, "interrupted", False)
+
+
 def stop_playing():
-    setattr(_player_worker, "interrupted", True)
-    sd.stop()
-    setattr(_player_worker, "interrupted", False)
+    if _PLAYER_TASK and not _PLAYER_TASK.done():
+        sd.stop()
+        try:
+            _PLAY_Q.put_nowait(None)
+        except asyncio.QueueFull:
+            pass
+
+
+# async def _player_worker():
+#     while True:
+#         samples, sr = await _PLAY_Q.get()
+#         if getattr(_player_worker, "interrupted", False):
+#             _PLAY_Q.task_done()
+#             continue
+
+#         sd.play(samples, sr)
+#         try:
+#             sd.wait()
+#         except Exception:
+#             pass
+#         _PLAY_Q.task_done()
 
 
 async def _player_worker():
     while True:
-        samples, sr = await _PLAY_Q.get()
-        if getattr(_player_worker, "interrupted", False):
+        item = await _PLAY_Q.get()
+        if item is None:  # 偵測結束訊號
             _PLAY_Q.task_done()
-            continue
+            break
 
-        sd.play(samples, sr)
+        samples, sr = item
         try:
+            sd.play(samples, sr)
             sd.wait()
         except Exception:
             pass
-        _PLAY_Q.task_done()
+        finally:
+            _PLAY_Q.task_done()
 
 
 async def play_wav(path: pathlib.Path):

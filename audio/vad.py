@@ -1,7 +1,7 @@
-import queue
+import queue, time
 import threading
 import pyaudio
-import webrtcvad
+import webrtcvad, math
 from collections import deque
 
 
@@ -37,8 +37,8 @@ class VADSource:
         self.end_ratio_base = end_ratio
         self.min_start_ratio = 0.3
         self.max_end_ratio = 0.95
-        self.adapt_decay = 0.01  # 每 frame 衰減幅度
-        self.idle_frame_count = 0  # 無語音 frame 計數器
+        self.adapt_decay = 0.01
+        self.idle_frame_count = 0
 
         if self.device in VADSource._streams:
             self._stream = VADSource._streams[self.device]
@@ -56,8 +56,16 @@ class VADSource:
             self._stream.start_stream()
             VADSource._streams[self.device] = self._stream
         self.reset()
-        t = threading.Thread(target=self._fill_buffer, daemon=True)
-        t.start()
+        self._running = True
+        self._thread = threading.Thread(target=self._fill_buffer, daemon=True)
+        self._thread.start()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+        VADSource._pya.terminate()
 
     def reset(self):
         self._ring = deque(maxlen=self.padding_frames)
@@ -69,39 +77,94 @@ class VADSource:
         self.idle_frame_count = 0
 
     def close(self):
-        self._stream.stop_stream()
-        self._stream.close()
+        self._running = False
+        if hasattr(self, "_thread") and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
+        time.sleep(0.05)
+        try:
+            if self._stream.is_active():
+                self._stream.stop_stream()
+            self._stream.close()
+            print("[VAD] Stream closed.")
+            if self.device in VADSource._streams:
+                del VADSource._streams[self.device]
+        except Exception as e:
+            print("[VAD] Stream close error:", e)
 
     def _fill_buffer(self):
-        while True:
-            raw = self._stream.read(self.frame_size, exception_on_overflow=False)
-            # rms = audioop.rms(raw, 2)
-            # print("RMS_IN", rms)  # DEBUG：確認有音量
+        while self._running:
+            try:
+                raw = self._stream.read(self.frame_size, exception_on_overflow=False)
+                # rms = audioop.rms(raw, 2)
+                # print("RMS_IN", rms)  # DEBUG：確認有音量
+            except Exception as e:
+                print("[VAD] Read error:", e)
+                break
+
             clean = raw
             if self.apm:
                 clean = self.apm.process_mic(raw)
                 # rms = audioop.rms(clean, 2)
                 # print("RMS_OUT", rms)  # DEBUG：確認有音量
-            # print('@')
+
             self._buff.put((clean, self.vad.is_speech(clean, self.rate)))
 
+    # def __iter__(self):
+    #     print('S',self.start_ratio * self._ring.maxlen)
+    #     while True:
+    #         frame, is_speech = self._buff.get()
+    #         self._ring.append(is_speech)
+    #         print("#" if is_speech else ".", end="", flush=True)
+    #         if not self._triggered:
+    #             self._fifo.append(frame)
+    #             if self._ring.count(True) >= self.start_ratio * self._ring.maxlen:
+    #                 print('T', self._ring.count(True))
+    #                 self._triggered = True
+    #                 for f in self._fifo:
+    #                     yield f
+    #                 self._fifo.clear()
+    #             continue
+
+    #         yield frame
+    #         if self._ring.count(False) >= self.end_ratio * self._ring.maxlen:
+    #             print('E', self._ring.count(False))
+    #             break
+    #     self.reset()
+
     def __iter__(self):
-        print('S',self.start_ratio * self._ring.maxlen)
+        print('S', self.start_ratio * self._ring.maxlen)
         while True:
             frame, is_speech = self._buff.get()
             self._ring.append(is_speech)
             print("#" if is_speech else ".", end="", flush=True)
+
             if not self._triggered:
                 self._fifo.append(frame)
+                if is_speech:
+                    self.idle_frame_count = 0
+                else:
+                    self.idle_frame_count += 1
+                    decay = 1 - math.exp(-self.adapt_decay * self.idle_frame_count)
+                    self.start_ratio = max(
+                        self.min_start_ratio, self.start_ratio_base * (1 - decay)
+                    )
+                    self.end_ratio = min(
+                        self.max_end_ratio, self.end_ratio_base + decay * (1 - self.end_ratio_base)
+                    )
+
                 if self._ring.count(True) >= self.start_ratio * self._ring.maxlen:
                     print('T', self._ring.count(True))
                     self._triggered = True
+                    self.start_ratio = self.start_ratio_base
+                    self.end_ratio = self.end_ratio_base
+                    self.idle_frame_count = 0
                     for f in self._fifo:
                         yield f
                     self._fifo.clear()
                 continue
 
             yield frame
+
             if self._ring.count(False) >= self.end_ratio * self._ring.maxlen:
                 print('E', self._ring.count(False))
                 break

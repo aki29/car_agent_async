@@ -11,7 +11,7 @@ from riva.client.proto import (
 )
 from audio.vad import VADSource
 from termcolor import colored
-
+from grpc import aio
 
 _AUD_DIR = pathlib.Path(".cache/audio_cache")
 _AUD_DIR.mkdir(parents=True, exist_ok=True)
@@ -99,17 +99,26 @@ class SpeechService:
         )
 
         async def req_gen():
-            yield riva_asr_pb2.StreamingRecognizeRequest(streaming_config=stream_cfg)
-            for frame in self._vad:
-                yield riva_asr_pb2.StreamingRecognizeRequest(audio_content=frame)
-            yield riva_asr_pb2.StreamingRecognizeRequest(audio_content=b"")
+            try:
+                yield riva_asr_pb2.StreamingRecognizeRequest(streaming_config=stream_cfg)
+                for frame in self._vad:
+                    yield riva_asr_pb2.StreamingRecognizeRequest(audio_content=frame)
+                # yield riva_asr_pb2.StreamingRecognizeRequest(audio_content=b"")
+            except Exception as e:
+                print("req_gen ERROR:", e)
 
         final_text: list[str] = []
-        async for rsp in self._asr.StreamingRecognize(req_gen()):
-            for res in rsp.results:
-                if res.is_final and res.alternatives:
-                    final_text.append(res.alternatives[0].transcript)
-
+        try:
+            async for rsp in self._asr.StreamingRecognize(req_gen()):
+                for res in rsp.results:
+                    if res.is_final and res.alternatives:
+                        final_text.append(res.alternatives[0].transcript)
+        except asyncio.CancelledError:
+            print("[Riva] Stream was cancelled.")
+            raise 
+        except aio.AioRpcError as e:
+            print("[Riva RPC Error]", e.details(), e.code().name)
+            return ""
         return " ".join(final_text).strip()
 
     async def listen_and_transcribe(

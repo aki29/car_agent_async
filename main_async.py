@@ -17,8 +17,29 @@ libasound.snd_lib_error_set_handler(_alsa_handler)
 
 
 @atexit.register
-def _reset_alsa_handler() -> None:
-    libasound.snd_lib_error_set_handler(None)
+def _cleanup_on_exit() -> None:
+    try:
+        libasound.snd_lib_error_set_handler(None)
+        print("[ALSA] Error handler reset.")
+    except Exception as e:
+        print("[ALSA] Reset failed:", e)
+
+    try:
+        from audio.vad import VADSource
+
+        for stream in list(VADSource._streams.values()):
+            try:
+                if stream.is_active():
+                    stream.stop_stream()
+                stream.close()
+            except Exception:
+                pass
+        VADSource._streams.clear()
+        VADSource._pya.terminate()
+        print("[PyAudio] Terminated cleanly.")
+        time.sleep(0.1)
+    except Exception as e:
+        print("[PyAudio] Terminate failed:", e)
 
 
 import uvloop
@@ -36,11 +57,8 @@ from agent.memory.engine import checkpoint_db
 from agent.memory.manager import MemoryManager
 from agent.memory.manager_async import init_db, load_memory
 from agent.rag import RAGManager, rag_manager as global_rag_manager
-from audio.vad import VADSource
 from speech.service import SpeechService
 from audio.io import mic_stream, play_wav, _PLAY_Q, _PLAYER_TASK
-
-# from speech.service import listen_once
 import opencc
 
 cc = opencc.OpenCC('s2tw.json')  # s2t=通用繁體, s2tw=台灣正體, s2hk=香港繁體…
@@ -54,7 +72,8 @@ def _sigint_handler(sig, frame):
     checkpoint_db()
     if _PLAYER_TASK is not None:
         _PLAYER_TASK.cancel()
-    os.kill(os.getpid(), signal.SIGKILL)
+    sys.exit(0)
+    # os.kill(os.getpid(), signal.SIGKILL)
     # raise KeyboardInterrupt
 
 
@@ -81,15 +100,15 @@ else:
 
     set_llm_cache(InMemoryCache())
 
-from audio.webrtc_frontend import WebRTCAudioFrontend
+# from audio.webrtc_frontend import WebRTCAudioFrontend
 
-# apm = WebRTCAudioFrontend(rate=16000, channels=1)
-apm = WebRTCAudioFrontend(rate=16000, channels=1, aec=0, ns=True, agc=0, vad=False)
-apm.apm.set_ns_level(1)  # 噪音抑制 0‑3，建議 2
-# apm.apm.set_agc_level(2)  # AGC 目標 dBFS，數值大 → 輸出較小聲
-# apm.apm.set_agc_target(5)
-# apm.apm.set_aec_level(0)  # AEC 0=Low, 1=Moderate, 2=High
-# apm.apm.set_vad_level(0)  # VAD 0=敏感，3=嚴格
+# # apm = WebRTCAudioFrontend(rate=16000, channels=1)
+# apm = WebRTCAudioFrontend(rate=16000, channels=1, aec=0, ns=True, agc=0, vad=False)
+# apm.apm.set_ns_level(1)  # 噪音抑制 0‑3，建議 2
+# # apm.apm.set_agc_level(2)  # AGC 目標 dBFS，數值大 → 輸出較小聲
+# # apm.apm.set_agc_target(5)
+# # apm.apm.set_aec_level(0)  # AEC 0=Low, 1=Moderate, 2=High
+# # apm.apm.set_vad_level(0)  # VAD 0=敏感，3=嚴格
 
 
 def init_models():
@@ -168,7 +187,7 @@ async def main() -> None:
                 # print("ASR:", query)
                 query = cc.convert(query)
                 print(colored(f"\n{query}", "white"))
-                continue
+                # continue
             else:
                 query = (await ainput(colored("\nQuery: ", "cyan"))).strip()
 
@@ -210,9 +229,11 @@ async def main() -> None:
         # await tts_task
         # sound_stream.close()
         checkpoint_db()
+
         if _PLAYER_TASK is not None:
             await _PLAY_Q.join()
             _PLAYER_TASK.cancel()
+
         # os.kill(os.getpid(), signal.SIGKILL)
         # sys.exit(1)
 
@@ -220,5 +241,7 @@ async def main() -> None:
 if __name__ == "__main__":
     try:
         asyncio.run(main())
+    except asyncio.CancelledError:
+        print("\n[System] Cancelled by user or task")
     except KeyboardInterrupt:
-        pass
+        print("\n[System] Interrupted by keyboard")
