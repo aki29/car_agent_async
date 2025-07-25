@@ -1,6 +1,7 @@
 import atexit, asyncio, ctypes, ctypes.util, os, re, signal, sys, time, uuid, emoji, math
 from pathlib import Path
 from termcolor import colored
+from audio.io import synth_and_enqueue
 
 ERROR_HANDLER_FUNC = ctypes.CFUNCTYPE(
     None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p
@@ -58,7 +59,8 @@ from agent.memory.manager import MemoryManager
 from agent.memory.manager_async import init_db, load_memory
 from agent.rag import RAGManager, rag_manager as global_rag_manager
 from speech.service import SpeechService
-from audio.io import mic_stream, play_wav, _PLAY_Q, _PLAYER_TASK
+from audio.io import mic_stream, play_wav, _PLAY_Q, _PLAYER_TASK, _ensure_player
+
 import opencc
 
 cc = opencc.OpenCC('s2tw.json')  # s2t=通用繁體, s2tw=台灣正體, s2hk=香港繁體…
@@ -165,22 +167,26 @@ async def main() -> None:
     chains = get_chat_chain(user_id, llm, mem_mgr, global_rag_manager)
     stream_chain = chains["stream"]
 
+    _ensure_player(asyncio.get_running_loop())
     speech = SpeechService(host=RIVA_URI)
-    from audio.io import stop_playing
+    # from audio.io import stop_playing
 
-    async def detect_barge_in(speech: SpeechService):
-        async for chunk in speech.transcribe(mic_stream()):
-            if len(chunk.strip()) > 2:
-                stop_playing()
-                return chunk
+    # async def detect_barge_in(speech: SpeechService):
+    #     async for chunk in speech.transcribe(mic_stream()):
+    #         if len(chunk.strip()) > 2:
+    #             stop_playing()
+    #             return chunk
 
     print("\n[Car‑Agent READY]")
+
+    async def wait_for_play_queue():
+        if _PLAY_Q is not None:
+            await _PLAY_Q.join()
 
     SENT_END = "，,。.!！?？"
     MAX_BUF = 40
     try:
         while True:
-            # await TTS_QUEUE.join()
             if VOICE_MODE:
                 print(colored("\nVoice input started…", "cyan"))
                 query = await speech.listen_and_transcribe(lang="zh-CN", sr=16000, device=None)
@@ -215,25 +221,23 @@ async def main() -> None:
                     # if need_flush and buf.strip():
                     if need_flush:
                         full_reply += buf
-                        wav = await speech.synth(buf.strip(), voice=VOICE_NAME, sr=TTS_SR)
-                        await play_wav(wav)
+                        # wav = await speech.synth(buf.strip(), voice=VOICE_NAME, sr=TTS_SR)
+                        # await play_wav(wav)
+                        asyncio.create_task(
+                            synth_and_enqueue(buf.strip(), speech, VOICE_NAME, TTS_SR)
+                        )
                         buf = ""
                         need_flush = False
             await mem_mgr.save_turn(query, full_reply)
             print(colored(f"\n(Total {(time.perf_counter()-first_token):.2f}s)", "blue"))
-
+            await wait_for_play_queue()
     except (EOFError, KeyboardInterrupt):
         print("\n[Quit]")
     finally:
-        # await TTS_QUEUE.put(None)
-        # await tts_task
-        # sound_stream.close()
         checkpoint_db()
-
         if _PLAYER_TASK is not None:
             await _PLAY_Q.join()
             _PLAYER_TASK.cancel()
-
         # os.kill(os.getpid(), signal.SIGKILL)
         # sys.exit(1)
 

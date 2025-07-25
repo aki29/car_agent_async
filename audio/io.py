@@ -1,4 +1,5 @@
 import asyncio, pathlib, wave, sounddevice as sd, numpy as np
+from speech.service import SpeechService
 
 Q_SIZE = 100
 
@@ -30,10 +31,6 @@ _PLAYER_TASK: asyncio.Task | None = None
 
 def _ensure_player(loop: asyncio.AbstractEventLoop):
     global _PLAY_Q, _PLAYER_TASK
-    # if _PLAY_Q is None:
-    #     _PLAY_Q = asyncio.Queue()
-    #     _PLAYER_TASK = loop.create_task(_player_worker())
-
     if _PLAY_Q is None or _PLAYER_TASK is None or _PLAYER_TASK.done():
         _PLAY_Q = asyncio.Queue()
         _PLAYER_TASK = loop.create_task(_player_worker())
@@ -51,7 +48,7 @@ def stop_playing():
         try:
             _PLAY_Q.put_nowait(None)
         except asyncio.QueueFull:
-            pass
+            _PLAY_Q = asyncio.Queue()  
 
 
 # async def _player_worker():
@@ -98,3 +95,19 @@ async def play_wav(path: pathlib.Path):
             data = data.reshape(-1, ch)
 
     await _PLAY_Q.put((data, sr))
+
+
+async def synth_and_enqueue(text: str, speech: SpeechService, voice: str, sr: int = 22050):
+    try:
+        wav = await speech.synth(text.strip(), voice=voice, sr=sr)
+        await play_wav(wav)
+    except Exception as e:
+        print("[TTS synth failed]:", e)
+
+
+async def detect_barge_in(speech: SpeechService):
+    async for chunk in speech.transcribe(mic_stream()):
+        if len(chunk.strip()) > 2:
+            print("[BARGE-IN] User started talking.", "yellow")
+            stop_playing()  # 停止播放中 TTS 音訊
+            return chunk.strip()

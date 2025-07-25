@@ -136,7 +136,7 @@ class VADSource:
         while True:
             frame, is_speech = self._buff.get()
             self._ring.append(is_speech)
-            print("#" if is_speech else ".", end="", flush=True)
+            # print("#" if is_speech else ".", end="", flush=True)
 
             if not self._triggered:
                 self._fifo.append(frame)
