@@ -48,7 +48,7 @@ def stop_playing():
         try:
             _PLAY_Q.put_nowait(None)
         except asyncio.QueueFull:
-            _PLAY_Q = asyncio.Queue()  
+            _PLAY_Q = asyncio.Queue()
 
 
 # async def _player_worker():
@@ -66,43 +66,77 @@ def stop_playing():
 #         _PLAY_Q.task_done()
 
 
+# async def _player_worker():
+#     while True:
+#         item = await _PLAY_Q.get()
+#         if item is None:  # 偵測結束訊號
+#             _PLAY_Q.task_done()
+#             break
+
+#         samples, sr = item
+#         try:
+#             sd.play(samples, sr)
+#             sd.wait()
+#         except Exception:
+#             pass
+#         finally:
+#             _PLAY_Q.task_done()
+
+
 async def _player_worker():
+    loop = asyncio.get_running_loop()
     while True:
         item = await _PLAY_Q.get()
-        if item is None:  # 偵測結束訊號
+        if item is None:
             _PLAY_Q.task_done()
             break
 
         samples, sr = item
         try:
-            sd.play(samples, sr)
-            sd.wait()
+            await loop.run_in_executor(None, lambda: sd.play(samples, sr, blocking=True))
         except Exception:
             pass
         finally:
             _PLAY_Q.task_done()
 
 
+# async def play_wav(path: pathlib.Path):
+#     loop = asyncio.get_running_loop()
+#     _ensure_player(loop)
+
+#     with wave.open(str(path), "rb") as wf:
+#         data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+#         sr = wf.getframerate()
+#         ch = wf.getnchannels()
+#         if ch > 1:
+#             data = data.reshape(-1, ch)
+
+#     await _PLAY_Q.put((data, sr))
+
+
 async def play_wav(path: pathlib.Path):
     loop = asyncio.get_running_loop()
     _ensure_player(loop)
 
-    with wave.open(str(path), "rb") as wf:
-        data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
-        sr = wf.getframerate()
-        ch = wf.getnchannels()
-        if ch > 1:
-            data = data.reshape(-1, ch)
+    def decode_wav():
+        with wave.open(str(path), "rb") as wf:
+            data = np.frombuffer(wf.readframes(wf.getnframes()), dtype=np.int16)
+            sr = wf.getframerate()
+            ch = wf.getnchannels()
+            if ch > 1:
+                data = data.reshape(-1, ch)
+            return data, sr
 
+    data, sr = await loop.run_in_executor(None, decode_wav)
     await _PLAY_Q.put((data, sr))
 
 
-async def synth_and_enqueue(text: str, speech: SpeechService, voice: str, sr: int = 22050):
-    try:
-        wav = await speech.synth(text.strip(), voice=voice, sr=sr)
-        await play_wav(wav)
-    except Exception as e:
-        print("[TTS synth failed]:", e)
+# async def synth_and_enqueue(text: str, speech: SpeechService, voice: str, sr: int = 22050):
+#     try:
+#         wav = await speech.synth(text.strip(), voice=voice, sr=sr)
+#         await play_wav(wav)
+#     except Exception as e:
+#         print("[TTS synth failed]:", e)
 
 
 async def detect_barge_in(speech: SpeechService):

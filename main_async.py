@@ -1,7 +1,8 @@
 import atexit, asyncio, ctypes, ctypes.util, os, re, signal, sys, time, uuid, emoji, math
 from pathlib import Path
 from termcolor import colored
-from audio.io import synth_and_enqueue
+
+# from audio.io import synth_and_enqueue
 
 ERROR_HANDLER_FUNC = ctypes.CFUNCTYPE(
     None, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p
@@ -179,11 +180,29 @@ async def main() -> None:
 
     print("\n[Car‑Agent READY]")
 
-    async def wait_for_play_queue():
+    # async def wait_for_play_queue():
+    #     if _PLAY_Q is not None:
+    #         await _PLAY_Q.join()
+
+    async def tts_worker(speech, voice, sr):
+        while True:
+            text = await tts_q.get()
+            if text is None:
+                break
+            wav = await speech.synth(text.strip(), voice=voice, sr=sr)
+            await play_wav(wav)
+            tts_q.task_done()
+
+    tts_q = asyncio.Queue()
+    asyncio.create_task(tts_worker(speech, VOICE_NAME, TTS_SR))
+
+    async def wait_tts_done():
+        if tts_q is not None:
+            await tts_q.join()
         if _PLAY_Q is not None:
             await _PLAY_Q.join()
 
-    SENT_END = "，,。.!！?？"
+    SENT_END = "，,。.!！?？、"
     MAX_BUF = 40
     try:
         while True:
@@ -209,28 +228,34 @@ async def main() -> None:
                 {"question": query}, config={"configurable": {"session_id": user_id}}
             ):
                 text = chunk.content if hasattr(chunk, "content") else str(chunk)
-                text = emoji.replace_emoji(text, replace="")
-                need_flush = False
-                for ch in text:
-                    buf += ch
-                    print(colored(ch, "green"), end="", flush=True)
-                    if ch in SENT_END:
-                        need_flush = True
-                    elif len(buf) >= MAX_BUF:
-                        need_flush = True
-                    # if need_flush and buf.strip():
-                    if need_flush:
-                        full_reply += buf
-                        # wav = await speech.synth(buf.strip(), voice=VOICE_NAME, sr=TTS_SR)
-                        # await play_wav(wav)
-                        asyncio.create_task(
-                            synth_and_enqueue(buf.strip(), speech, VOICE_NAME, TTS_SR)
-                        )
-                        buf = ""
-                        need_flush = False
+                if text:
+                    text = emoji.replace_emoji(text, replace="")
+                    need_flush = False
+                    for ch in text:
+                        if ch:
+                            buf += ch
+                            print(colored(ch, "green"), end="", flush=True)
+                        if ch in SENT_END:
+                            need_flush = True
+                            # print("#T#")
+                        elif len(buf) >= MAX_BUF:
+                            # print("#L#")
+                            need_flush = True
+                        # if need_flush and buf.strip():
+                        if need_flush:
+                            full_reply += buf
+                            # wav = await speech.synth(buf.strip(), voice=VOICE_NAME, sr=TTS_SR)
+                            # await play_wav(wav)
+                            # asyncio.create_task(
+                            #     synth_and_enqueue(buf.strip(), speech, VOICE_NAME, TTS_SR)
+                            # )
+                            await tts_q.put(buf.strip())
+                            buf = ""
+                            need_flush = False
+            # print("@@")
             await mem_mgr.save_turn(query, full_reply)
             print(colored(f"\n(Total {(time.perf_counter()-first_token):.2f}s)", "blue"))
-            await wait_for_play_queue()
+            await wait_tts_done()
     except (EOFError, KeyboardInterrupt):
         print("\n[Quit]")
     finally:
